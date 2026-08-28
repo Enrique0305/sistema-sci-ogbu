@@ -11,6 +11,12 @@ node_modules/
 dist/
 build/
 
+# Wallet de Oracle (credenciales institucionales SUM) - nunca versionar
+oracle_wallet/
+backend/oracle_wallet/
+*.sso
+*.p12
+
 # Logs
 npm-debug.log*
 *.log

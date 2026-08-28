@@ -150,6 +150,78 @@ driver `pg` con un `Pool` de `pg`, cambiando los placeholders `?` por
 `$1, $2, ...` y las llamadas `RETURNING` en los `INSERT` de los controladores
 en lugar de una consulta `SELECT` posterior por `insertId`.
 
+## 8. Integracion con Oracle SUM (opcional)
+
+Script de sincronizacion de solo lectura que trae la poblacion vigente de
+alumnos desde la vista institucional `OBIENESTAR.ALUMNO` (fuente SUM,
+Oracle Autonomous Database) hacia la tabla local `estudiantes`, para
+reemplazar los datos dummy por datos reales de matricula.
+
+**Alcance:** solo se sincronizan los campos que ya existen en `estudiantes`
+(`codigo_estudiante`, `nombres`, `apellidos`, `facultad`,
+`correo_institucional`) — minimizacion de datos personales. No se trae
+DNI, telefono, direccion, fecha de nacimiento, promedio ni situacion
+academica.
+
+**Aislamiento:** toda la logica vive en `backend/src/config/oracle.js` y
+`backend/src/integrations/oracleSum/`. El servidor HTTP principal
+(`npm run dev` / `npm start`) nunca inicializa la conexion a Oracle, asi
+que si Oracle no esta disponible el resto de la API sigue funcionando con
+normalidad. La sincronizacion se ejecuta como script manual/cron, no como
+endpoint HTTP, porque el proyecto aun no tiene autenticacion de usuarios.
+
+1. Instalar dependencia (ya incluida en `package.json`):
+   ```bash
+   cd backend && npm install
+   ```
+2. Obtener el Wallet (carpeta con `cwallet.sso`, `ewallet.pem`,
+   `tnsnames.ora`, `sqlnet.ora`) de la Oficina del SUM y guardarlo **fuera
+   del repositorio** (ya esta en `.gitignore`, ej. `backend/oracle_wallet/`).
+3. Completar en `backend/.env` (nunca en `.env.example` ni versionado):
+   ```
+   ORACLE_USER=...
+   ORACLE_PASSWORD=...
+   ORACLE_DSN=SUMDB_TP   # confirmar alias real en tnsnames.ora del Wallet
+   ORACLE_WALLET_DIR=./oracle_wallet
+   ORACLE_WALLET_PASSWORD=...
+   ORACLE_SYNC_PERIODOS_N=4
+   ORACLE_INSTANT_CLIENT_DIR=   # solo si se usa modo Thick (ver abajo)
+   ```
+4. Ejecutar:
+   ```bash
+   npm run sync:alumnos
+   ```
+   Imprime los periodos academicos detectados dinamicamente y un resumen
+   (insertados/actualizados, y el detalle de filas omitidas con su motivo
+   — nunca se omite una fila en silencio).
+
+**Solucion de problemas frecuentes (Wallet + modo Thin/Thick):**
+
+- `NJS-505: unable to initiate TLS connection ... bad decrypt` — el
+  `ewallet.pem` del Wallet esta cifrado y no se cuenta con
+  `ORACLE_WALLET_PASSWORD`. Se puede confirmar de forma independiente con
+  `openssl pkcs8 -in ewallet.pem -nocrypt` (si pide password, esta
+  cifrado). Si no se tiene esa password, la alternativa es usar modo
+  Thick: instalar [Oracle Instant Client Basic](https://www.oracle.com/database/technologies/instant-client/downloads.html)
+  (zip, sin instalador) y setear `ORACLE_INSTANT_CLIENT_DIR` apuntando a
+  la carpeta `instantclient_XX_YY` extraida. En modo Thick se usa
+  `cwallet.sso` (auto-login), que no requiere password de wallet.
+- `ORA-28759: failure to open file` (solo en modo Thick, con Instant
+  Client instalado como zip sin `ORACLE_HOME`) — el `sqlnet.ora` del
+  Wallet trae `WALLET_LOCATION ... DIRECTORY="?/network/admin"`; ese `?`
+  se resuelve contra `$ORACLE_HOME`, que no existe en una instalacion
+  Instant Client tipo zip. Solucion: editar `sqlnet.ora` dentro de la
+  carpeta del Wallet y reemplazar `"?/network/admin"` por la ruta
+  absoluta real de esa misma carpeta, ej.
+  `DIRECTORY="C:\ruta\completa\oracle_wallet"`.
+
+**Reglas de seguridad de esta integracion:**
+- Conexion a Oracle 100% de solo lectura (`src/config/oracle.js` rechaza
+  cualquier sentencia que no empiece con `SELECT`/`WITH`).
+- El Wallet y las credenciales nunca se registran en logs ni se imprimen
+  en la salida del script.
+- El frontend nunca se conecta a Oracle ni conoce estas credenciales.
+
 ## Licencia
 
 Este proyecto se distribuye bajo la licencia [MIT](LICENSE). Consulta el
