@@ -94,11 +94,15 @@ function bodyCell(text, widthDxa, opts = {}) {
 
 function modelTable() {
   const rows = [
-    ['usuarios_responsables', 'usuario_id', 'Operadores/trabajadores que registran atenciones', '-'],
-    ['estudiantes', 'estudiante_id', 'Padron de estudiantes atendidos por la OGBU', '-'],
-    ['servicios_ogbu', 'servicio_id', 'Catalogo de servicios (Alimentacion, Servicio Social, Residencias)', '-'],
+    ['servicios_ogbu', 'servicio_id', 'Catalogo de servicios; es_sci distingue SCI (Alimentacion, Servicio Social, Residencias) de internos (Soporte TI, Gestion OGBU)', '-'],
+    ['unidades', 'unidad_id', 'Oficinas/unidades operativas de la OGBU', 'servicio_id (nullable)'],
+    ['usuarios_responsables', 'usuario_id', 'Operadores que registran/atienden, adscritos a una unidad', 'unidad_id (nullable)'],
+    ['estudiantes', 'estudiante_id', 'Padron de estudiantes (sincronizado desde Oracle SUM)', '-'],
     ['trimestres', 'trimestre_id', 'Periodos trimestrales usados para agrupar encuestas', '-'],
-    ['atenciones', 'atencion_id', 'Registro de cada atencion brindada', 'estudiante_id, servicio_id, usuario_responsable_id'],
+    ['categorias_atencion', 'categoria_id', 'Catalogo de tipos de atencion por servicio', 'servicio_id'],
+    ['catalogo_acciones', 'accion_id', 'Catalogo de acciones tomadas por servicio', 'servicio_id'],
+    ['atenciones', 'atencion_id', 'Registro de cada atencion/ticket, con ciclo de estados y reincidencia', 'estudiante_id (nullable), servicio_id, unidad_id, categoria_id, accion_id, usuario_responsable_id, atencion_origen_id'],
+    ['atenciones_historial', 'historial_id', 'Trazabilidad de cada cambio de estado de una atencion', 'atencion_id, unidad_id, usuario_responsable_id'],
     ['preguntas_encuesta', 'pregunta_id', 'Preguntas de satisfaccion por servicio y trimestre', 'servicio_id, trimestre_id'],
     ['respuestas_encuesta', 'respuesta_id', 'Respuestas de satisfaccion (Likert 1-5 o texto libre)', 'pregunta_id, atencion_id (nullable)'],
   ];
@@ -141,8 +145,8 @@ function paaSmcTable() {
     ],
     [
       'Tiempo promedio de atencion por tipo de servicio',
-      'No se ha desarrollado un indicador especifico.',
-      'Pendiente',
+      'Promedio de horas entre fecha_atencion y fecha_resolucion/fecha_cierre, por servicio. Habilitado por el ciclo de estados y el registro de fecha de cierre.',
+      'Implementado',
     ],
     [
       'Niveles de satisfaccion',
@@ -615,11 +619,11 @@ async function main() {
           paaSmcTable(),
           new Paragraph({ spacing: { before: 200, after: 100 }, children: [] }),
           p(
-            'Nota sobre el indicador pendiente: para calcular el tiempo promedio de atencion por servicio se ' +
-              'requiere registrar el momento de cierre de cada atencion (adicional al campo estado_atencion ya ' +
-              'existente), de modo que el sistema pueda obtener la diferencia entre la fecha de registro ' +
-              '(fecha_atencion) y la fecha de cierre, agrupada por servicio. Esta funcionalidad no ha sido ' +
-              'implementada y queda pendiente para una siguiente iteracion del sistema.',
+            'Los tres indicadores previstos estan implementados. El tiempo promedio de atencion se obtiene del ' +
+              'ciclo de estados de cada atencion (Registrada -> En atencion -> Resuelta -> Cerrada): al pasar a ' +
+              'Resuelta/Cerrada el sistema registra fecha_resolucion/fecha_cierre y el dashboard promedia las ' +
+              'horas transcurridas desde fecha_atencion, agrupadas por servicio. Cada cambio de estado queda ' +
+              'trazado en la tabla atenciones_historial.',
             { italics: true, size: 19, color: '6B7280' }
           ),
 

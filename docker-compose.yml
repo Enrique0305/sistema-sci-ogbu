@@ -1,18 +1,19 @@
-# Stack completo para desarrollo/pruebas: MySQL + backend + frontend.
+# Stack completo (MySQL + backend + frontend) para desplegar en un servidor
+# de la red institucional. El frontend se sirve como build estatico detras de
+# nginx, que ademas hace de proxy de /api hacia el backend: asi el sistema se
+# abre desde cualquier equipo de la LAN por la IP del servidor.
 #
-# Requisitos antes de "docker compose up --build":
-#   1. cp backend/.env.example backend/.env   y completarlo (igual que
-#      sin Docker). DB_HOST/DB_PORT y las rutas de Oracle se sobreescriben
-#      mas abajo para el contexto de contenedores; el resto de variables
-#      (contraseñas, ORACLE_USER/PASSWORD/DSN, etc.) se toman tal cual
-#      de ese archivo.
-#   2. Si vas a usar la integracion Oracle SUM: coloca la carpeta del
-#      Wallet en ./oracle_wallet (o define ORACLE_WALLET_HOST_DIR en un
-#      ".env" en la RAIZ del repo, distinto de backend/.env, para
-#      apuntar a otra ruta).
+# Requisitos antes de "docker compose up -d --build":
+#   1. cp backend/.env.example backend/.env   y completarlo (igual que sin
+#      Docker). DB_HOST/DB_PORT y las rutas de Oracle se sobreescriben mas
+#      abajo para el contexto de contenedores; el resto de variables
+#      (ORACLE_USER/PASSWORD/DSN, etc.) se toman tal cual de ese archivo.
+#   2. cp .env.example .env   en la RAIZ del repo y ajustar contrasenas de
+#      base de datos, HTTP_PORT y CORS_ORIGIN.
+#   3. Si vas a usar la integracion Oracle SUM: coloca la carpeta del Wallet
+#      en ./oracle_wallet (o define ORACLE_WALLET_HOST_DIR en el .env raiz).
 #
-# La sincronizacion de alumnos NO corre automaticamente (es un script
-# manual/cron, ver README). Para ejecutarla dentro del stack:
+# La sincronizacion de alumnos NO corre automaticamente (script manual/cron):
 #   docker compose run --rm backend npm run sync:alumnos
 
 services:
@@ -26,12 +27,13 @@ services:
       MYSQL_PASSWORD: ${DB_PASSWORD:-cambiar_esta_clave}
     volumes:
       - mysql_data:/var/lib/mysql
-      # Carga el esquema + datos dummy automaticamente solo la PRIMERA
-      # vez que se crea el volumen (comportamiento estandar de la imagen
-      # oficial de MySQL para /docker-entrypoint-initdb.d).
+      # Carga el esquema + datos dummy automaticamente SOLO la primera vez
+      # que se crea el volumen (comportamiento estandar de la imagen MySQL).
       - ./database/schema_mysql.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    # Expuesto solo en la loopback del servidor, para clientes SQL locales.
+    # Comentar esta linea si no se necesita acceso directo a la base.
     ports:
-      - "3306:3306"
+      - "127.0.0.1:3306:3306"
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 5s
@@ -47,12 +49,12 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      # Estas sobreescriben lo que haya en backend/.env: dentro de la red
-      # de Docker, MySQL se llama "mysql" (no localhost); DB_NAME/USER/
-      # PASSWORD se toman de las mismas variables raiz que arma el
-      # servicio "mysql" arriba para que nunca queden desincronizadas
-      # entre los dos contenedores; y las rutas de Oracle del host
-      # (Windows) no existen dentro del contenedor Linux.
+      # Sobreescriben lo que haya en backend/.env: dentro de la red de Docker
+      # MySQL se llama "mysql" (no localhost); DB_NAME/USER/PASSWORD salen de
+      # las mismas variables raiz que arma el servicio "mysql" para que nunca
+      # queden desincronizadas; y las rutas de Oracle del host no existen
+      # dentro del contenedor Linux.
+      NODE_ENV: production
       DB_HOST: mysql
       DB_PORT: 3306
       DB_NAME: ${DB_NAME:-sci_ogbu}
@@ -60,11 +62,18 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-cambiar_esta_clave}
       ORACLE_WALLET_DIR: /app/oracle_wallet
       ORACLE_INSTANT_CLIENT_DIR: /opt/oracle/instantclient
-      CORS_ORIGIN: http://localhost:5173
+      # Carpeta (dentro del contenedor) con las plantillas Excel llenadas por
+      # las oficinas, usada por `npm run import:catalogo`.
+      FORMATOS_DIR: /app/formatos_entrada
+      # Con el proxy de nginx las peticiones son del mismo origen; "*" es
+      # aceptable para una herramienta interna en LAN. Restringir si se desea.
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
     volumes:
       - ${ORACLE_WALLET_HOST_DIR:-./oracle_wallet}:/app/oracle_wallet:ro
-    ports:
-      - "4000:4000"
+      - ./docs/formatos/entrada:/app/formatos_entrada:ro
+    # Sin puerto publicado: la API solo se alcanza a traves de nginx.
+    expose:
+      - "4000"
     depends_on:
       mysql:
         condition: service_healthy
@@ -72,11 +81,13 @@ services:
   frontend:
     build:
       context: ./frontend
+      args:
+        VITE_API_URL: /api
     restart: unless-stopped
-    environment:
-      VITE_API_URL: http://localhost:4000/api
     ports:
-      - "5173:5173"
+      # Puerto HTTP por el que el sistema queda accesible en la red:
+      #   http://IP-DEL-SERVIDOR:${HTTP_PORT}
+      - "${HTTP_PORT:-8080}:80"
     depends_on:
       - backend
 

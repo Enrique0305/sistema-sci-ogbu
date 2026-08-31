@@ -117,14 +117,55 @@ Abrir `http://localhost:5173` en el navegador.
 
 ## 5. Endpoints principales
 
-| Metodo | Ruta                         | Descripcion                                            |
-|--------|------------------------------|---------------------------------------------------------|
-| POST   | `/api/atenciones`            | Registra una atencion y evalua si corresponde encuesta |
-| GET    | `/api/atenciones`            | Lista atenciones con filtros de fecha/servicio/estado  |
-| GET    | `/api/indicadores/dashboard` | Calcula ICA e ISE, y KPIs generales                    |
-| POST   | `/api/encuestas/responder`   | Guarda respuestas de encuesta (transaccional)          |
-| GET    | `/api/estudiantes/:codigo`   | Busqueda rapida de estudiante por codigo               |
-| GET    | `/api/servicios`             | Lista servicios OGBU activos                           |
+| Metodo | Ruta                             | Descripcion                                                     |
+|--------|----------------------------------|----------------------------------------------------------------|
+| POST   | `/api/atenciones`                | Registra una atencion/ticket, detecta reincidencia y evalua encuesta |
+| GET    | `/api/atenciones`                | Lista con filtros de fecha, servicio, unidad, categoria, estado, prioridad |
+| GET    | `/api/atenciones/:id`            | Detalle de una atencion + historial de cambios de estado       |
+| PATCH  | `/api/atenciones/:id/estado`     | Cambia el estado respetando el ciclo de vida (transaccional)   |
+| GET    | `/api/indicadores/dashboard`     | ICA, ISE, tiempo de resolucion, estados, reincidencia, KPIs    |
+| POST   | `/api/encuestas/responder`       | Guarda respuestas de encuesta (transaccional)                  |
+| GET    | `/api/estudiantes/:codigo`       | Busqueda rapida de estudiante por codigo                       |
+| GET    | `/api/servicios?ambito=sci\|todos`| Lista servicios (SCI + internos); `es_sci` en la respuesta     |
+| GET    | `/api/unidades?servicio_id=`     | Unidades/oficinas activas, filtrables por servicio             |
+| GET    | `/api/usuarios?unidad_id=`       | Operadores activos, filtrables por unidad                      |
+| GET    | `/api/categorias?servicio_id=`   | Catalogo de tipos de atencion                                  |
+| GET    | `/api/acciones?servicio_id=`     | Catalogo de acciones tomadas                                   |
+
+### Ciclo de estados de una atencion (mesa de ayuda)
+
+```
+Registrada  -> En atencion | Derivada | Cerrada
+En atencion -> Derivada | Resuelta | Registrada
+Derivada    -> En atencion | Resuelta
+Resuelta    -> Cerrada | Reabierta
+Cerrada     -> Reabierta
+Reabierta   -> En atencion | Resuelta
+```
+
+Al pasar a `Resuelta` se fija `fecha_resolucion`; a `Cerrada`, `fecha_cierre`
+(habilita el indicador de tiempo promedio de atencion). Cada cambio queda en
+`atenciones_historial` (estado, comentario, unidad, momento). Las transiciones
+invalidas se rechazan con 409. Definidas en `backend/src/utils/estadoAtencion.js`.
+
+### Categorizacion y reincidencia
+
+Las atenciones se clasifican con `categorias_atencion` (catalogo por servicio) y
+`catalogo_acciones`. Al registrar una atencion de un estudiante en una categoria
+que ya tuvo antes, el sistema la marca como reincidente y la enlaza a la anterior
+(`atencion_origen_id`). El catalogo se puebla enviando a cada oficina la plantilla
+`docs/formatos/Formato_Catalogo_Atenciones_OGBU.xlsx` y luego:
+
+```bash
+# copiar los .xlsx llenados a docs/formatos/entrada/ y ejecutar:
+docker compose run --rm backend npm run import:catalogo
+```
+
+### Tickets internos
+
+Ademas de atenciones a estudiantes, se registran tickets internos (sin estudiante,
+con `solicitante_desc`) en los servicios internos `Soporte TI` y `Gestion OGBU`
+(`es_sci = 0`, no entran en ICA/ISE).
 
 ## 6. Seguridad implementada
 
@@ -139,7 +180,22 @@ Abrir `http://localhost:5173` en el navegador.
 - Manejo centralizado de errores que no filtra detalles internos
   (stack traces, SQL) al cliente.
 - Transacciones (`BEGIN`/`COMMIT`/`ROLLBACK`) para operaciones multi-fila
-  como el guardado masivo de respuestas de encuesta.
+  (guardado de encuestas, registro de atenciones con historial, cambios de estado).
+
+> **Pendiente de seguridad:** el sistema aun no tiene autenticacion de usuarios.
+> La unidad y el operador de cada atencion/cambio de estado se eligen en el
+> formulario, no se toman de una sesion. Antes de un uso multi-oficina real debe
+> incorporarse login y control de acceso por unidad.
+
+### Estructura de la base de datos (mesa de ayuda)
+
+`schema_mysql.sql` es el esquema completo para instalacion limpia. Para bases ya
+desplegadas, aplicar los cambios incrementales de `database/migrations/`
+(ver `database/migrations/README.md`) — **no** usar `docker compose down -v`, que
+borraria los estudiantes sincronizados. Tablas principales anadidas:
+`unidades`, `categorias_atencion`, `catalogo_acciones`, `atenciones_historial`;
+`atenciones` gana unidad/categoria/accion/prioridad/derivacion y el nuevo ciclo
+de estados.
 
 ## 7. Notas sobre PostgreSQL
 
@@ -222,43 +278,101 @@ endpoint HTTP, porque el proyecto aun no tiene autenticacion de usuarios.
   en la salida del script.
 - El frontend nunca se conecta a Oracle ni conoce estas credenciales.
 
-## 9. Despliegue con Docker (alternativa a instalar todo localmente)
+## 9. Despliegue con Docker (servidor en la red institucional)
 
 Stack completo (MySQL + backend + frontend) con `docker-compose.yml` en
-la raiz del repo. Pensado para paridad de desarrollo (el frontend corre
-`vite dev` dentro del contenedor, no es un build de produccion).
+la raiz del repo. El frontend se sirve como **build estatico detras de
+nginx**, que ademas hace de proxy de `/api` hacia el backend. Solo se
+publica un puerto HTTP (`HTTP_PORT`, 8080 por defecto); el backend y
+MySQL quedan en la red interna de Compose. La API se consume como ruta
+relativa `/api`, asi que el sistema se abre desde **cualquier equipo de
+la LAN** por la IP del servidor sin recompilar.
+
+```
+Navegadores LAN -> http://IP-DEL-SERVIDOR:8080
+                          |
+                  [ frontend ] nginx: SPA + proxy  /api -> backend:4000
+                  [ backend  ] Node.js + Express (solo red interna)
+                  [ mysql    ] MySQL 8 (volumen mysql_data)
+```
 
 1. Configurar `backend/.env` igual que en la seccion 2 (obligatorio).
-2. Si vas a usar la integracion Oracle SUM: colocar la carpeta del
+2. `cp .env.example .env` en la raiz del repo y ajustar contrasenas de
+   base de datos, `HTTP_PORT` y `CORS_ORIGIN`. `DB_NAME`/`DB_USER`/
+   `DB_PASSWORD` de este archivo se usan tanto en el contenedor de MySQL
+   como en el backend, para que nunca queden desincronizados.
+3. Si vas a usar la integracion Oracle SUM: colocar la carpeta del
    Wallet en `./oracle_wallet` junto a este README (o definir
-   `ORACLE_WALLET_HOST_DIR` en un `.env` en la raiz, ver paso 3). El
-   backend corre en Linux dentro del contenedor, asi que **siempre**
-   necesita modo Thick con Instant Client para Linux — el `Dockerfile`
-   ya lo descarga e instala automaticamente durante el build.
-3. (Opcional) `cp .env.example .env` en la raiz del repo si necesitas
-   cambiar `DB_NAME`/`DB_USER`/`DB_PASSWORD` (usados tanto por el
-   contenedor de MySQL como por el backend, para que nunca queden
-   desincronizados), `MYSQL_ROOT_PASSWORD`, la ruta del Wallet, o fijar
-   una version especifica del Instant Client.
+   `ORACLE_WALLET_HOST_DIR` en el `.env` de la raiz). El backend corre en
+   Linux dentro del contenedor, asi que **siempre** necesita modo Thick
+   con Instant Client para Linux — el `Dockerfile` ya lo descarga e
+   instala automaticamente durante el build.
 4. Levantar todo:
    ```bash
-   docker compose up --build
+   docker compose up -d --build
    ```
-   Frontend en `http://localhost:5173`, backend en
-   `http://localhost:4000/api/health`. La primera vez que se crea el
-   volumen de MySQL, se carga automaticamente `database/schema_mysql.sql`
-   (esquema + datos dummy).
-5. Para correr la sincronizacion de alumnos dentro del stack (en vez de
-   `npm run sync:alumnos` local):
+   El sistema queda en `http://IP-DEL-SERVIDOR:8080` (y
+   `http://localhost:8080` en el propio servidor). La primera vez que se
+   crea el volumen de MySQL se carga automaticamente
+   `database/schema_mysql.sql` (esquema + datos dummy).
+5. Abrir el puerto en el firewall de Windows para el acceso desde la LAN:
+   ```powershell
+   New-NetFirewallRule -DisplayName "SCI-OGBU HTTP 8080" -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow
+   ```
+### 9.1. Sincronizacion de alumnos reales desde Oracle SUM
+
+Reemplaza los datos dummy de `estudiantes` por la matricula vigente
+(vista `OBIENESTAR.ALUMNO`). Requiere que el servidor tenga alcance de
+red a la base Autonomous del SUM (`10.110.2.208:1522`, solo accesible
+desde la red institucional).
+
+1. Wallet en `./oracle_wallet` (cwallet.sso, ewallet.pem, tnsnames.ora,
+   sqlnet.ora). Editar `sqlnet.ora` para que apunte a la ruta del Wallet
+   **dentro del contenedor** (si no, `ORA-28759` en modo Thick):
+   ```
+   WALLET_LOCATION = (SOURCE = (METHOD = file) (METHOD_DATA = (DIRECTORY="/app/oracle_wallet")))
+   SSL_SERVER_DN_MATCH=no
+   ```
+2. En `backend/.env`: `ORACLE_USER`, `ORACLE_PASSWORD`, `ORACLE_DSN`
+   (alias de `tnsnames.ora`, ej. `SUMDB_TP`) y `ORACLE_SYNC_PERIODOS_N`
+   (nº de periodos academicos recientes a traer, def. 4).
+   `ORACLE_WALLET_DIR` y `ORACLE_INSTANT_CLIENT_DIR` las fija Compose.
+3. Ejecutar (el backend ya trae el Instant Client registrado con
+   `ldconfig`, necesario para que `oracledb` lo cargue):
    ```bash
    docker compose run --rm backend npm run sync:alumnos
    ```
+   Tarda unos minutos (upsert fila por fila de ~40k alumnos). Imprime
+   los periodos usados, insertados/actualizados y el detalle de filas
+   omitidas (nunca omite en silencio; el motivo tipico es correo vacio
+   o invalido en la fuente).
+4. Programar como tarea recurrente (opcional): Programador de tareas de
+   Windows con la accion `docker compose run --rm backend npm run sync:alumnos`
+   ejecutada en la carpeta del repo.
+
+Nota: los alumnos reales cuyo codigo coincida con un codigo dummy lo
+sobreescriben. Para partir de una base 100% limpia:
+`docker compose down -v && docker compose up -d --build` y luego la
+sincronizacion (se pierden las atenciones de prueba).
+
+### 9.2. Operacion
+
+`docker compose ps` (estado), `docker compose logs -f`
+(logs), `docker compose stop` / `start` (pausar sin borrar datos),
+`docker compose down` (apagar conservando el volumen),
+`docker compose down -v` (apagar y **borrar** la base). Tras `git pull`:
+`docker compose up -d --build`.
 
 **Nota:** `backend/.env` sigue siendo el mismo archivo que sin Docker,
 pero `docker-compose.yml` sobreescribe en tiempo de ejecucion las
-variables que dependen de la topologia de contenedores
-(`DB_HOST`, `ORACLE_WALLET_DIR`, `ORACLE_INSTANT_CLIENT_DIR`) — no hace
-falta editarlas manualmente para Docker.
+variables que dependen de la topologia de contenedores (`DB_HOST`,
+`DB_*`, `CORS_ORIGIN`, `ORACLE_WALLET_DIR`, `ORACLE_INSTANT_CLIENT_DIR`)
+— no hace falta editarlas manualmente para Docker.
+
+**Seguridad:** el sistema aun no tiene autenticacion de usuarios;
+limita el acceso a la red interna. Cambia las contrasenas por defecto
+de `.env` antes de exponerlo. Para HTTPS, coloca un proxy inverso
+institucional (o Caddy/nginx con certificado) delante del puerto 8080.
 
 ## Licencia
 

@@ -1,18 +1,29 @@
-# Imagen del frontend en modo desarrollo (servidor Vite), para paridad
-# con "npm run dev" fuera de Docker. No es una imagen de produccion
-# (no hay build estatico + nginx); ver README si se necesita eso despues.
-FROM node:18-alpine
+# Imagen del frontend para servir en la red institucional (LAN).
+#
+# A diferencia de "npm run dev", aqui se hace un build estatico de la SPA y se
+# sirve con nginx, que ademas hace de proxy inverso de /api hacia el backend.
+# Esto permite que el sistema se abra desde CUALQUIER equipo de la red por la
+# IP del servidor (la API se resuelve como ruta relativa /api, no como
+# "localhost", que solo funcionaria en la propia CPU servidor).
+
+# --- Etapa 1: build de la SPA (React + Vite) ---
+FROM node:18-bookworm-slim AS build
 
 WORKDIR /app
-
 COPY package*.json ./
 RUN npm install
 
 COPY . .
 
-EXPOSE 5173
+# La API se consume como ruta relativa; nginx (etapa 2) la enruta al backend.
+ARG VITE_API_URL=/api
+ENV VITE_API_URL=$VITE_API_URL
+RUN npm run build
 
-# --host expone el servidor de Vite en 0.0.0.0 dentro del contenedor;
-# sin esto Vite solo escucha en localhost y no seria alcanzable desde
-# fuera del contenedor.
-CMD ["npm", "run", "dev", "--", "--host"]
+# --- Etapa 2: servidor estatico + proxy ---
+FROM nginx:1.27-alpine
+
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
+
+EXPOSE 80

@@ -1,0 +1,2 @@
+# Coloca aqui las copias del Formato_Catalogo_Atenciones_OGBU.xlsx llenadas
+# por cada oficina, luego ejecuta:  docker compose run --rm backend npm run import:catalogo

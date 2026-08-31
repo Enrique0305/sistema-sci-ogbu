@@ -27,3 +27,13 @@ Thumbs.db
 
 # Archivos temporales de Office
 ~$*
+
+# Plantillas de catalogo llenadas por las oficinas (datos operativos, no versionar)
+docs/formatos/entrada/*.xlsx
+
+# Dependencias transitorias del generador de formato
+docs/formatos/node_modules/
+docs/formatos/package*.json
+
+# Copias de seguridad de base de datos
+backups/

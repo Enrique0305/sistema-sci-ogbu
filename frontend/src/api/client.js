@@ -9,21 +9,51 @@ async function manejarRespuesta(res) {
   if (!res.ok) {
     const error = new Error(data.error || `Error HTTP ${res.status}`);
     error.detalles = data.detalles;
+    error.transicionesValidas = data.transiciones_validas;
     throw error;
   }
   return data;
 }
 
-export async function obtenerServicios() {
-  const res = await fetch(`${BASE_URL}/servicios`);
+function qs(filtros = {}) {
+  return new URLSearchParams(
+    Object.fromEntries(Object.entries(filtros).filter(([, v]) => v !== '' && v != null))
+  ).toString();
+}
+
+// --- Catalogos ---
+export async function obtenerServicios(ambito) {
+  const res = await fetch(`${BASE_URL}/servicios${ambito ? `?ambito=${ambito}` : ''}`);
   return manejarRespuesta(res);
 }
 
+export async function obtenerUnidades(filtros = {}) {
+  const res = await fetch(`${BASE_URL}/unidades?${qs(filtros)}`);
+  return manejarRespuesta(res);
+}
+
+export async function obtenerOperadores(filtros = {}) {
+  const res = await fetch(`${BASE_URL}/usuarios?${qs(filtros)}`);
+  return manejarRespuesta(res);
+}
+
+export async function obtenerCategorias(filtros = {}) {
+  const res = await fetch(`${BASE_URL}/categorias?${qs(filtros)}`);
+  return manejarRespuesta(res);
+}
+
+export async function obtenerAcciones(filtros = {}) {
+  const res = await fetch(`${BASE_URL}/acciones?${qs(filtros)}`);
+  return manejarRespuesta(res);
+}
+
+// --- Estudiantes ---
 export async function buscarEstudiante(codigo) {
   const res = await fetch(`${BASE_URL}/estudiantes/${encodeURIComponent(codigo)}`);
   return manejarRespuesta(res);
 }
 
+// --- Atenciones ---
 export async function crearAtencion(payload) {
   const res = await fetch(`${BASE_URL}/atenciones`, {
     method: 'POST',
@@ -34,21 +64,31 @@ export async function crearAtencion(payload) {
 }
 
 export async function listarAtenciones(filtros = {}) {
-  const params = new URLSearchParams(
-    Object.fromEntries(Object.entries(filtros).filter(([, v]) => v !== '' && v != null))
-  );
-  const res = await fetch(`${BASE_URL}/atenciones?${params.toString()}`);
+  const res = await fetch(`${BASE_URL}/atenciones?${qs(filtros)}`);
   return manejarRespuesta(res);
 }
 
+export async function obtenerAtencion(id) {
+  const res = await fetch(`${BASE_URL}/atenciones/${id}`);
+  return manejarRespuesta(res);
+}
+
+export async function cambiarEstadoAtencion(id, payload) {
+  const res = await fetch(`${BASE_URL}/atenciones/${id}/estado`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return manejarRespuesta(res);
+}
+
+// --- Indicadores ---
 export async function obtenerDashboard(filtros = {}) {
-  const params = new URLSearchParams(
-    Object.fromEntries(Object.entries(filtros).filter(([, v]) => v !== '' && v != null))
-  );
-  const res = await fetch(`${BASE_URL}/indicadores/dashboard?${params.toString()}`);
+  const res = await fetch(`${BASE_URL}/indicadores/dashboard?${qs(filtros)}`);
   return manejarRespuesta(res);
 }
 
+// --- Encuestas ---
 export async function responderEncuesta(respuestas) {
   const res = await fetch(`${BASE_URL}/encuestas/responder`, {
     method: 'POST',

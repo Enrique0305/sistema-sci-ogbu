@@ -2,17 +2,44 @@
 -- Sistema Digital de Atenciones e Indicadores SCI - OGBU UNMSM
 -- Motor: MySQL 8.0+ / MariaDB 10.5+
 -- Contiene: DDL (tablas, PK, FK, indices, constraints) + datos DUMMY de prueba
--- Diferencias clave frente a la version PostgreSQL:
---   * AUTO_INCREMENT en lugar de SERIAL
---   * ENGINE=InnoDB + utf8mb4 explicitos
---   * CHECK constraints soportados desde MySQL 8.0.16 (se mantienen igual)
+--
+-- Incluye el modelo de mesa de ayuda (unidades, categorias, ciclo de estados
+-- con historial). Para bases ya desplegadas, ver database/migrations/.
 -- ============================================================================
 
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
 -- ----------------------------------------------------------------------------
--- 1. USUARIOS_RESPONSABLES
+-- 1. SERVICIOS_OGBU
+--    es_sci = 1 -> servicio reportable al SCI (entra en ICA / ISE)
+--    es_sci = 0 -> servicio interno (mesa de ayuda: TI, gestion)
+-- ----------------------------------------------------------------------------
+CREATE TABLE servicios_ogbu (
+    servicio_id     INT AUTO_INCREMENT PRIMARY KEY,
+    nombre_servicio VARCHAR(100) NOT NULL UNIQUE,
+    descripcion     VARCHAR(255),
+    estado          ENUM('Activo', 'Inactivo') NOT NULL DEFAULT 'Activo',
+    es_sci          TINYINT(1) NOT NULL DEFAULT 1
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ----------------------------------------------------------------------------
+-- 2. UNIDADES  (oficinas / unidades operativas de la OGBU)
+-- ----------------------------------------------------------------------------
+CREATE TABLE unidades (
+    unidad_id   INT AUTO_INCREMENT PRIMARY KEY,
+    nombre      VARCHAR(120) NOT NULL UNIQUE,
+    servicio_id INT NULL,
+    tipo        ENUM('Atencion', 'Soporte', 'Direccion') NOT NULL DEFAULT 'Atencion',
+    estado      TINYINT(1) NOT NULL DEFAULT 1,
+    creado_en   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_unidades_servicio FOREIGN KEY (servicio_id)
+        REFERENCES servicios_ogbu (servicio_id) ON DELETE SET NULL,
+    INDEX idx_unidades_servicio (servicio_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ----------------------------------------------------------------------------
+-- 3. USUARIOS_RESPONSABLES  (operadores, pertenecen a una unidad)
 -- ----------------------------------------------------------------------------
 CREATE TABLE usuarios_responsables (
     usuario_id           INT AUTO_INCREMENT PRIMARY KEY,
@@ -20,12 +47,16 @@ CREATE TABLE usuarios_responsables (
     apellidos            VARCHAR(100) NOT NULL,
     correo_institucional VARCHAR(150) NOT NULL UNIQUE,
     rol                  VARCHAR(50)  NOT NULL DEFAULT 'Operador',
+    unidad_id            INT NULL,
+    cargo                VARCHAR(80) NULL,
     estado               TINYINT(1)   NOT NULL DEFAULT 1,
-    creado_en            TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+    creado_en            TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_usuarios_unidad FOREIGN KEY (unidad_id)
+        REFERENCES unidades (unidad_id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ----------------------------------------------------------------------------
--- 2. ESTUDIANTES
+-- 4. ESTUDIANTES
 -- ----------------------------------------------------------------------------
 CREATE TABLE estudiantes (
     estudiante_id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -41,17 +72,7 @@ CREATE TABLE estudiantes (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ----------------------------------------------------------------------------
--- 3. SERVICIOS_OGBU
--- ----------------------------------------------------------------------------
-CREATE TABLE servicios_ogbu (
-    servicio_id     INT AUTO_INCREMENT PRIMARY KEY,
-    nombre_servicio VARCHAR(100) NOT NULL UNIQUE,
-    descripcion     VARCHAR(255),
-    estado          ENUM('Activo', 'Inactivo') NOT NULL DEFAULT 'Activo'
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- ----------------------------------------------------------------------------
--- 4. TRIMESTRES
+-- 5. TRIMESTRES
 -- ----------------------------------------------------------------------------
 CREATE TABLE trimestres (
     trimestre_id      INT AUTO_INCREMENT PRIMARY KEY,
@@ -64,32 +85,115 @@ CREATE TABLE trimestres (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ----------------------------------------------------------------------------
--- 5. ATENCIONES
+-- 6. CATEGORIAS_ATENCION  (catalogo de tipos de atencion, por servicio)
+-- ----------------------------------------------------------------------------
+CREATE TABLE categorias_atencion (
+    categoria_id    INT AUTO_INCREMENT PRIMARY KEY,
+    servicio_id     INT NOT NULL,
+    nombre          VARCHAR(150) NOT NULL,
+    descripcion     VARCHAR(400) NULL,
+    suele_repetirse TINYINT(1) NOT NULL DEFAULT 0,
+    activa          TINYINT(1) NOT NULL DEFAULT 1,
+    orden           SMALLINT NOT NULL DEFAULT 0,
+    creado_en       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_categorias_servicio FOREIGN KEY (servicio_id)
+        REFERENCES servicios_ogbu (servicio_id) ON DELETE CASCADE,
+    CONSTRAINT uq_categoria_servicio_nombre UNIQUE (servicio_id, nombre),
+    INDEX idx_categorias_servicio (servicio_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ----------------------------------------------------------------------------
+-- 7. CATALOGO_ACCIONES  (catalogo de acciones tomadas, por servicio)
+-- ----------------------------------------------------------------------------
+CREATE TABLE catalogo_acciones (
+    accion_id   INT AUTO_INCREMENT PRIMARY KEY,
+    servicio_id INT NOT NULL,
+    nombre      VARCHAR(150) NOT NULL,
+    descripcion VARCHAR(400) NULL,
+    activa      TINYINT(1) NOT NULL DEFAULT 1,
+    orden       SMALLINT NOT NULL DEFAULT 0,
+    CONSTRAINT fk_acciones_servicio FOREIGN KEY (servicio_id)
+        REFERENCES servicios_ogbu (servicio_id) ON DELETE CASCADE,
+    CONSTRAINT uq_accion_servicio_nombre UNIQUE (servicio_id, nombre),
+    INDEX idx_acciones_servicio (servicio_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ----------------------------------------------------------------------------
+-- 8. ATENCIONES
+--    estudiante_id NULL  -> ticket interno (usar solicitante_desc)
+--    Ciclo de estados: Registrada -> En atencion -> (Derivada) -> Resuelta
+--                      -> Cerrada ; Reabierta desde Resuelta/Cerrada.
 -- ----------------------------------------------------------------------------
 CREATE TABLE atenciones (
     atencion_id            INT AUTO_INCREMENT PRIMARY KEY,
-    estudiante_id           INT NOT NULL,
-    servicio_id             INT NOT NULL,
-    fecha_atencion           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    descripcion_motivo       TEXT NOT NULL,
-    diagnostico_accion       TEXT,
-    usuario_responsable_id   INT NOT NULL,
-    estado_atencion          ENUM('En Proceso', 'Completado') NOT NULL DEFAULT 'En Proceso',
-    creado_en                TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    estudiante_id          INT NULL,
+    solicitante_desc       VARCHAR(200) NULL,
+    servicio_id            INT NOT NULL,
+    unidad_id              INT NOT NULL,
+    categoria_id           INT NULL,
+    fecha_atencion         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    descripcion_motivo     TEXT NOT NULL,
+    diagnostico_accion     TEXT,
+    accion_id              INT NULL,
+    usuario_responsable_id INT NULL,
+    estado_atencion        ENUM('Registrada', 'En atencion', 'Derivada', 'Resuelta', 'Cerrada', 'Reabierta')
+                           NOT NULL DEFAULT 'Registrada',
+    prioridad              ENUM('Baja', 'Media', 'Alta') NOT NULL DEFAULT 'Media',
+    atencion_origen_id     INT NULL,
+    unidad_derivada_id     INT NULL,
+    fecha_resolucion       TIMESTAMP NULL,
+    fecha_cierre           TIMESTAMP NULL,
+    creado_en              TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_atenciones_estudiante FOREIGN KEY (estudiante_id)
         REFERENCES estudiantes (estudiante_id) ON DELETE RESTRICT,
     CONSTRAINT fk_atenciones_servicio FOREIGN KEY (servicio_id)
         REFERENCES servicios_ogbu (servicio_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_atenciones_unidad FOREIGN KEY (unidad_id)
+        REFERENCES unidades (unidad_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_atenciones_categoria FOREIGN KEY (categoria_id)
+        REFERENCES categorias_atencion (categoria_id) ON DELETE SET NULL,
+    CONSTRAINT fk_atenciones_accion FOREIGN KEY (accion_id)
+        REFERENCES catalogo_acciones (accion_id) ON DELETE SET NULL,
     CONSTRAINT fk_atenciones_usuario FOREIGN KEY (usuario_responsable_id)
         REFERENCES usuarios_responsables (usuario_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_atenciones_origen FOREIGN KEY (atencion_origen_id)
+        REFERENCES atenciones (atencion_id) ON DELETE SET NULL,
+    CONSTRAINT fk_atenciones_unidad_derivada FOREIGN KEY (unidad_derivada_id)
+        REFERENCES unidades (unidad_id) ON DELETE SET NULL,
+    CONSTRAINT chk_atencion_solicitante
+        CHECK (estudiante_id IS NOT NULL OR solicitante_desc IS NOT NULL),
     INDEX idx_atenciones_estudiante (estudiante_id),
     INDEX idx_atenciones_servicio (servicio_id),
+    INDEX idx_atenciones_unidad (unidad_id),
+    INDEX idx_atenciones_categoria (categoria_id),
+    INDEX idx_atenciones_estado (estado_atencion),
     INDEX idx_atenciones_fecha (fecha_atencion),
     INDEX idx_atenciones_servicio_fecha (servicio_id, fecha_atencion)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ----------------------------------------------------------------------------
--- 6. PREGUNTAS_ENCUESTA
+-- 9. ATENCIONES_HISTORIAL  (trazabilidad del ciclo de estados)
+-- ----------------------------------------------------------------------------
+CREATE TABLE atenciones_historial (
+    historial_id           INT AUTO_INCREMENT PRIMARY KEY,
+    atencion_id            INT NOT NULL,
+    estado_anterior        VARCHAR(20) NULL,
+    estado_nuevo           VARCHAR(20) NOT NULL,
+    comentario             VARCHAR(600) NULL,
+    unidad_id              INT NULL,
+    usuario_responsable_id INT NULL,
+    creado_en              TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_hist_atencion FOREIGN KEY (atencion_id)
+        REFERENCES atenciones (atencion_id) ON DELETE CASCADE,
+    CONSTRAINT fk_hist_unidad FOREIGN KEY (unidad_id)
+        REFERENCES unidades (unidad_id) ON DELETE SET NULL,
+    CONSTRAINT fk_hist_usuario FOREIGN KEY (usuario_responsable_id)
+        REFERENCES usuarios_responsables (usuario_id) ON DELETE SET NULL,
+    INDEX idx_hist_atencion (atencion_id, creado_en)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ----------------------------------------------------------------------------
+-- 10. PREGUNTAS_ENCUESTA
 -- ----------------------------------------------------------------------------
 CREATE TABLE preguntas_encuesta (
     pregunta_id     INT AUTO_INCREMENT PRIMARY KEY,
@@ -106,7 +210,7 @@ CREATE TABLE preguntas_encuesta (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ----------------------------------------------------------------------------
--- 7. RESPUESTAS_ENCUESTA
+-- 11. RESPUESTAS_ENCUESTA
 -- ----------------------------------------------------------------------------
 CREATE TABLE respuestas_encuesta (
     respuesta_id     INT AUTO_INCREMENT PRIMARY KEY,
@@ -125,24 +229,115 @@ CREATE TABLE respuestas_encuesta (
 
 SET FOREIGN_KEY_CHECKS = 1;
 
+-- ----------------------------------------------------------------------------
+-- 12. V_REINCIDENCIAS  (estudiante + categoria con mas de una atencion)
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW v_reincidencias AS
+SELECT estudiante_id,
+       categoria_id,
+       COUNT(*)            AS total_atenciones,
+       MIN(fecha_atencion) AS primera_atencion,
+       MAX(fecha_atencion) AS ultima_atencion
+  FROM atenciones
+ WHERE estudiante_id IS NOT NULL
+   AND categoria_id IS NOT NULL
+ GROUP BY estudiante_id, categoria_id
+HAVING COUNT(*) > 1;
+
 -- ============================================================================
 -- DATOS DUMMY DE PRUEBA
 -- ============================================================================
 
-INSERT INTO usuarios_responsables (nombres, apellidos, correo_institucional, rol) VALUES
-('Maria', 'Quispe Rojas',   'mquispe@unmsm.edu.pe', 'Trabajador Social'),
-('Jose',  'Torres Vidal',   'jtorres@unmsm.edu.pe', 'Nutricionista'),
-('Ana',   'Fernandez Diaz', 'afernandez@unmsm.edu.pe', 'Administrador');
+INSERT INTO servicios_ogbu (nombre_servicio, descripcion, estado, es_sci) VALUES
+('Alimentacion',              'Servicio de Comedor Universitario',                  'Activo', 1),
+('Servicio Social',           'Atencion y orientacion social',                      'Activo', 1),
+('Residencias Universitarias','Alojamiento estudiantil',                            'Activo', 1),
+('Soporte TI',                'Soporte tecnico y sistemas (Unidad de Informatica)', 'Activo', 0),
+('Gestion OGBU',              'Gestion y direccion de la OGBU',                     'Activo', 0);
 
-INSERT INTO servicios_ogbu (nombre_servicio, descripcion, estado) VALUES
-('Alimentacion',              'Servicio de Comedor Universitario', 'Activo'),
-('Servicio Social',           'Atencion y orientacion social',     'Activo'),
-('Residencias Universitarias','Alojamiento estudiantil',           'Activo');
+INSERT INTO unidades (nombre, servicio_id, tipo) VALUES
+('Oficina de Alimentación',            1, 'Atencion'),
+('Comedor de CU',                      1, 'Atencion'),
+('Comedor de Cangallo',                1, 'Atencion'),
+('Comedor de Veterinaria',             1, 'Atencion'),
+('Comedor de San Juan de Lurigancho',  1, 'Atencion'),
+('Residencia de Ciudad',               3, 'Atencion'),
+('Residencia de Tello',                3, 'Atencion'),
+('Oficina de Servicio Social',         2, 'Atencion'),
+('Unidad de Informática',              4, 'Soporte'),
+('Jefatura de OGBU',                   5, 'Direccion');
+
+INSERT INTO usuarios_responsables (nombres, apellidos, correo_institucional, rol, unidad_id, cargo) VALUES
+('Maria', 'Quispe Rojas',   'mquispe@unmsm.edu.pe',    'Trabajador Social', 8, 'Trabajadora social'),
+('Jose',  'Torres Vidal',   'jtorres@unmsm.edu.pe',    'Nutricionista',     1, 'Nutricionista'),
+('Ana',   'Fernandez Diaz', 'afernandez@unmsm.edu.pe', 'Administrador',    10, 'Asistente de jefatura'),
+('Responsable', 'Comedor de CU',                      'responsable.unidad2@unmsm.edu.pe',  'Operador', 2, 'Responsable de unidad (placeholder)'),
+('Responsable', 'Comedor de Cangallo',                'responsable.unidad3@unmsm.edu.pe',  'Operador', 3, 'Responsable de unidad (placeholder)'),
+('Responsable', 'Comedor de Veterinaria',             'responsable.unidad4@unmsm.edu.pe',  'Operador', 4, 'Responsable de unidad (placeholder)'),
+('Responsable', 'Comedor de San Juan de Lurigancho',  'responsable.unidad5@unmsm.edu.pe',  'Operador', 5, 'Responsable de unidad (placeholder)'),
+('Responsable', 'Residencia de Ciudad',               'responsable.unidad6@unmsm.edu.pe',  'Operador', 6, 'Responsable de unidad (placeholder)'),
+('Responsable', 'Residencia de Tello',                'responsable.unidad7@unmsm.edu.pe',  'Operador', 7, 'Responsable de unidad (placeholder)'),
+('Responsable', 'Unidad de Informática',              'responsable.unidad9@unmsm.edu.pe',  'Operador', 9, 'Responsable de unidad (placeholder)');
 
 INSERT INTO trimestres (anio, periodo_trimestre, fecha_inicio, fecha_fin) VALUES
 (2026, 1, '2026-01-01', '2026-03-31'),
 (2026, 2, '2026-04-01', '2026-06-30'),
 (2026, 3, '2026-07-01', '2026-09-30');
+
+INSERT INTO categorias_atencion (servicio_id, nombre, descripcion, suele_repetirse, orden) VALUES
+(1, 'Solicitud de subsidio alimentario',      'Nueva solicitud de acceso al comedor', 0, 1),
+(1, 'Renovación de subsidio alimentario',     'Continuidad del beneficio por otro periodo', 1, 2),
+(1, 'Reclamo por calidad de alimentos',       'Queja sobre calidad, cantidad o temperatura', 1, 3),
+(1, 'Consulta de requisitos o proceso',       NULL, 1, 4),
+(1, 'Problema con el padrón / registro',      'El estudiante no figura o figura con datos errados', 1, 5),
+(1, 'Otro / no tipificado',                   NULL, 0, 99),
+(2, 'Evaluación socioeconómica',              NULL, 0, 1),
+(2, 'Solicitud de constancia socioeconómica', NULL, 1, 2),
+(2, 'Orientación / consejería',               NULL, 1, 3),
+(2, 'Seguimiento de caso social',             'Continuidad de un caso ya abierto', 1, 4),
+(2, 'Derivación a apoyo económico',           NULL, 0, 5),
+(2, 'Otro / no tipificado',                   NULL, 0, 99),
+(3, 'Postulación a residencia',               NULL, 0, 1),
+(3, 'Renovación de residencia',               NULL, 1, 2),
+(3, 'Reporte de incidencia en habitación',    'Desperfecto, daño o falla en la habitación', 1, 3),
+(3, 'Solicitud de mantenimiento',             NULL, 1, 4),
+(3, 'Convivencia / disciplina',               NULL, 1, 5),
+(3, 'Otro / no tipificado',                   NULL, 0, 99),
+(4, 'Falla de equipo / PC',                   NULL, 1, 1),
+(4, 'Problema de red / internet',             NULL, 1, 2),
+(4, 'Acceso a sistema / credenciales',        NULL, 1, 3),
+(4, 'Instalación o configuración de software', NULL, 1, 4),
+(4, 'Soporte al sistema SCI-OGBU',            NULL, 1, 5),
+(4, 'Otro / no tipificado',                   NULL, 0, 99),
+(5, 'Consulta administrativa',                NULL, 1, 1),
+(5, 'Derivación entre oficinas',              NULL, 1, 2),
+(5, 'Requerimiento de información',           NULL, 1, 3),
+(5, 'Otro / no tipificado',                   NULL, 0, 99);
+
+INSERT INTO catalogo_acciones (servicio_id, nombre, orden) VALUES
+(1, 'Subsidio otorgado', 1),
+(1, 'Subsidio denegado', 2),
+(1, 'Derivado a control de calidad', 3),
+(1, 'Información brindada', 4),
+(1, 'Datos actualizados en el sistema', 5),
+(2, 'Constancia emitida', 1),
+(2, 'Caso derivado a apoyo socioeconómico', 2),
+(2, 'Entrevista programada', 3),
+(2, 'Orientación brindada', 4),
+(2, 'Informe social elaborado', 5),
+(3, 'Formulario y requisitos entregados', 1),
+(3, 'Mantenimiento coordinado', 2),
+(3, 'Cupo asignado', 3),
+(3, 'Amonestación registrada', 4),
+(3, 'Solicitud en evaluación', 5),
+(4, 'Equipo reparado', 1),
+(4, 'Configuración aplicada', 2),
+(4, 'Credenciales restablecidas', 3),
+(4, 'Software instalado', 4),
+(4, 'Derivado a proveedor externo', 5),
+(5, 'Derivado a la oficina competente', 1),
+(5, 'Información remitida', 2),
+(5, 'Trámite resuelto', 3);
 
 INSERT INTO estudiantes (codigo_estudiante, nombres, apellidos, facultad, correo_institucional) VALUES
 ('20190001', 'Luis',    'Garcia Mendoza',   'Facultad de Ingenieria de Sistemas', 'luis.garcia1@unmsm.edu.pe'),
@@ -154,17 +349,22 @@ INSERT INTO estudiantes (codigo_estudiante, nombres, apellidos, facultad, correo
 ('20220017', 'Bryan',   'Salazar Cotrina',  'Facultad de Quimica e Ing. Quimica', 'bryan.salazar@unmsm.edu.pe'),
 ('20220305', 'Melissa', 'Rivas Tapia',      'Facultad de Educacion',              'melissa.rivas@unmsm.edu.pe');
 
-INSERT INTO atenciones (estudiante_id, servicio_id, fecha_atencion, descripcion_motivo, diagnostico_accion, usuario_responsable_id, estado_atencion) VALUES
-(1, 1, '2026-04-10 09:15:00', 'Solicitud de subsidio alimentario', 'Evaluado, cumple requisitos. Se otorga subsidio parcial.', 1, 'Completado'),
-(2, 2, '2026-04-11 10:30:00', 'Orientacion por dificultades economicas', 'Derivado a programa de apoyo socioeconomico.', 3, 'Completado'),
-(3, 3, '2026-04-12 14:00:00', 'Consulta sobre postulacion a residencia', 'Se entrego formulario y requisitos de postulacion.', 3, 'Completado'),
-(4, 1, '2026-05-02 08:45:00', 'Reclamo por calidad del servicio de comedor', 'Registrado y derivado a control de calidad.', 2, 'Completado'),
-(5, 2, '2026-05-05 11:20:00', 'Solicitud de constancia socioeconomica', 'Constancia emitida el mismo dia.', 3, 'Completado'),
-(6, 3, '2026-05-06 16:10:00', 'Reporte de incidencia en habitacion', 'Se coordino mantenimiento correctivo.', 1, 'En Proceso'),
-(7, 1, '2026-06-01 12:05:00', 'Actualizacion de datos para subsidio', 'Datos actualizados en el sistema.', 2, 'Completado'),
-(1, 2, '2026-06-03 09:40:00', 'Seguimiento de caso social', 'Segunda entrevista programada.', 3, 'En Proceso'),
-(8, 1, '2026-06-15 13:25:00', 'Consulta sobre horario de atencion', 'Informacion brindada satisfactoriamente.', 2, 'Completado'),
-(3, 1, '2026-07-10 08:00:00', 'Renovacion de subsidio alimentario', 'Renovado por un trimestre adicional.', 1, 'Completado');
+-- Atenciones dummy: (estudiante, servicio, unidad, categoria, motivo, accion cat, accion texto, usuario, estado, fecha)
+INSERT INTO atenciones
+    (estudiante_id, servicio_id, unidad_id, categoria_id, fecha_atencion, descripcion_motivo, accion_id, diagnostico_accion, usuario_responsable_id, estado_atencion, fecha_cierre) VALUES
+(1, 1, 1,  1, '2026-04-10 09:15:00', 'Solicitud de subsidio alimentario',            1,  'Evaluado, cumple requisitos. Se otorga subsidio parcial.', 2, 'Cerrada',    '2026-04-12 10:00:00'),
+(2, 2, 8,  11,'2026-04-11 10:30:00', 'Orientacion por dificultades economicas',      7,  'Derivado a programa de apoyo socioeconomico.',             1, 'Cerrada',    '2026-04-15 09:00:00'),
+(3, 3, 6,  13,'2026-04-12 14:00:00', 'Consulta sobre postulacion a residencia',      11, 'Se entrego formulario y requisitos de postulacion.',       3, 'Cerrada',    '2026-04-12 15:00:00'),
+(4, 1, 2,  3, '2026-05-02 08:45:00', 'Reclamo por calidad del servicio de comedor',  3,  'Registrado y derivado a control de calidad.',              4, 'Cerrada',    '2026-05-06 12:00:00'),
+(5, 2, 8,  8, '2026-05-05 11:20:00', 'Solicitud de constancia socioeconomica',       6,  'Constancia emitida el mismo dia.',                         1, 'Cerrada',    '2026-05-05 16:00:00'),
+(6, 3, 6,  15,'2026-05-06 16:10:00', 'Reporte de incidencia en habitacion',          12, 'Se coordino mantenimiento correctivo.',                    3, 'En atencion', NULL),
+(7, 1, 1,  5, '2026-06-01 12:05:00', 'Actualizacion de datos para subsidio',         5,  'Datos actualizados en el sistema.',                        2, 'Cerrada',    '2026-06-02 09:00:00'),
+(1, 2, 8,  10,'2026-06-03 09:40:00', 'Seguimiento de caso social',                   8,  'Segunda entrevista programada.',                           1, 'En atencion', NULL),
+(8, 1, 1,  4, '2026-06-15 13:25:00', 'Consulta sobre horario de atencion',           4,  'Informacion brindada satisfactoriamente.',                 2, 'Cerrada',    '2026-06-15 14:00:00'),
+(3, 1, 1,  2, '2026-07-10 08:00:00', 'Renovacion de subsidio alimentario',           1,  'Renovado por un trimestre adicional.',                     2, 'Cerrada',    '2026-07-11 10:00:00');
+
+INSERT INTO atenciones_historial (atencion_id, estado_anterior, estado_nuevo, comentario, unidad_id, creado_en)
+SELECT atencion_id, NULL, estado_atencion, 'Registro inicial (datos dummy)', unidad_id, creado_en FROM atenciones;
 
 INSERT INTO preguntas_encuesta (servicio_id, trimestre_id, texto_pregunta, tipo_respuesta) VALUES
 (1, 2, 'Como califica la calidad de los alimentos recibidos?', 'Likert_1_5'),

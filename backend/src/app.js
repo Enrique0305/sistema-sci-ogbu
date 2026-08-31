@@ -9,17 +9,27 @@ const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
 
 const app = express();
 
+// Detras de un proxy inverso (nginx en el despliegue con Docker): confiar en
+// el primer salto para que el rate limiting y los logs usen la IP real del
+// cliente a partir de X-Forwarded-For.
+app.set('trust proxy', 1);
+
 // Seguridad: cabeceras HTTP endurecidas.
 app.use(helmet());
 
 // CORS restringido a los origenes configurados (frontend autorizado).
-const origenesPermitidos = (process.env.CORS_ORIGIN || 'http://localhost:5173')
-  .split(',')
-  .map((o) => o.trim());
+// CORS_ORIGIN="*" permite cualquier origen (util para una herramienta interna
+// en LAN servida detras del proxy de nginx, donde las peticiones ya son del
+// mismo origen). Con una lista separada por comas se restringe a esos origenes.
+const corsOrigin = process.env.CORS_ORIGIN || 'http://localhost:5173';
+const origenesPermitidos =
+  corsOrigin.trim() === '*'
+    ? '*'
+    : corsOrigin.split(',').map((o) => o.trim());
 app.use(
   cors({
     origin: origenesPermitidos,
-    methods: ['GET', 'POST'],
+    methods: ['GET', 'POST', 'PATCH'],
   })
 );
 
@@ -33,7 +43,7 @@ const limitadorEscritura = rateLimit({ windowMs: 15 * 60 * 1000, max: 100 });
 
 app.use('/api', limitadorGeneral);
 app.use(['/api/atenciones', '/api/encuestas'], (req, res, next) => {
-  if (req.method === 'POST') return limitadorEscritura(req, res, next);
+  if (req.method === 'POST' || req.method === 'PATCH') return limitadorEscritura(req, res, next);
   next();
 });
 
