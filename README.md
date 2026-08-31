@@ -222,6 +222,44 @@ endpoint HTTP, porque el proyecto aun no tiene autenticacion de usuarios.
   en la salida del script.
 - El frontend nunca se conecta a Oracle ni conoce estas credenciales.
 
+## 9. Despliegue con Docker (alternativa a instalar todo localmente)
+
+Stack completo (MySQL + backend + frontend) con `docker-compose.yml` en
+la raiz del repo. Pensado para paridad de desarrollo (el frontend corre
+`vite dev` dentro del contenedor, no es un build de produccion).
+
+1. Configurar `backend/.env` igual que en la seccion 2 (obligatorio).
+2. Si vas a usar la integracion Oracle SUM: colocar la carpeta del
+   Wallet en `./oracle_wallet` junto a este README (o definir
+   `ORACLE_WALLET_HOST_DIR` en un `.env` en la raiz, ver paso 3). El
+   backend corre en Linux dentro del contenedor, asi que **siempre**
+   necesita modo Thick con Instant Client para Linux — el `Dockerfile`
+   ya lo descarga e instala automaticamente durante el build.
+3. (Opcional) `cp .env.example .env` en la raiz del repo si necesitas
+   cambiar `DB_NAME`/`DB_USER`/`DB_PASSWORD` (usados tanto por el
+   contenedor de MySQL como por el backend, para que nunca queden
+   desincronizados), `MYSQL_ROOT_PASSWORD`, la ruta del Wallet, o fijar
+   una version especifica del Instant Client.
+4. Levantar todo:
+   ```bash
+   docker compose up --build
+   ```
+   Frontend en `http://localhost:5173`, backend en
+   `http://localhost:4000/api/health`. La primera vez que se crea el
+   volumen de MySQL, se carga automaticamente `database/schema_mysql.sql`
+   (esquema + datos dummy).
+5. Para correr la sincronizacion de alumnos dentro del stack (en vez de
+   `npm run sync:alumnos` local):
+   ```bash
+   docker compose run --rm backend npm run sync:alumnos
+   ```
+
+**Nota:** `backend/.env` sigue siendo el mismo archivo que sin Docker,
+pero `docker-compose.yml` sobreescribe en tiempo de ejecucion las
+variables que dependen de la topologia de contenedores
+(`DB_HOST`, `ORACLE_WALLET_DIR`, `ORACLE_INSTANT_CLIENT_DIR`) — no hace
+falta editarlas manualmente para Docker.
+
 ## Licencia
 
 Este proyecto se distribuye bajo la licencia [MIT](LICENSE). Consulta el

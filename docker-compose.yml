@@ -1,0 +1,84 @@
+# Stack completo para desarrollo/pruebas: MySQL + backend + frontend.
+#
+# Requisitos antes de "docker compose up --build":
+#   1. cp backend/.env.example backend/.env   y completarlo (igual que
+#      sin Docker). DB_HOST/DB_PORT y las rutas de Oracle se sobreescriben
+#      mas abajo para el contexto de contenedores; el resto de variables
+#      (contraseñas, ORACLE_USER/PASSWORD/DSN, etc.) se toman tal cual
+#      de ese archivo.
+#   2. Si vas a usar la integracion Oracle SUM: coloca la carpeta del
+#      Wallet en ./oracle_wallet (o define ORACLE_WALLET_HOST_DIR en un
+#      ".env" en la RAIZ del repo, distinto de backend/.env, para
+#      apuntar a otra ruta).
+#
+# La sincronizacion de alumnos NO corre automaticamente (es un script
+# manual/cron, ver README). Para ejecutarla dentro del stack:
+#   docker compose run --rm backend npm run sync:alumnos
+
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_change_me}
+      MYSQL_DATABASE: ${DB_NAME:-sci_ogbu}
+      MYSQL_USER: ${DB_USER:-sci_ogbu_app}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-cambiar_esta_clave}
+    volumes:
+      - mysql_data:/var/lib/mysql
+      # Carga el esquema + datos dummy automaticamente solo la PRIMERA
+      # vez que se crea el volumen (comportamiento estandar de la imagen
+      # oficial de MySQL para /docker-entrypoint-initdb.d).
+      - ./database/schema_mysql.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build:
+      context: ./backend
+      args:
+        ORACLE_INSTANTCLIENT_URL: ${ORACLE_INSTANTCLIENT_URL:-https://download.oracle.com/otn_software/linux/instantclient/2326300/instantclient-basic-linux.x64-23.26.3.0.0.zip}
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      # Estas sobreescriben lo que haya en backend/.env: dentro de la red
+      # de Docker, MySQL se llama "mysql" (no localhost); DB_NAME/USER/
+      # PASSWORD se toman de las mismas variables raiz que arma el
+      # servicio "mysql" arriba para que nunca queden desincronizadas
+      # entre los dos contenedores; y las rutas de Oracle del host
+      # (Windows) no existen dentro del contenedor Linux.
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-sci_ogbu}
+      DB_USER: ${DB_USER:-sci_ogbu_app}
+      DB_PASSWORD: ${DB_PASSWORD:-cambiar_esta_clave}
+      ORACLE_WALLET_DIR: /app/oracle_wallet
+      ORACLE_INSTANT_CLIENT_DIR: /opt/oracle/instantclient
+      CORS_ORIGIN: http://localhost:5173
+    volumes:
+      - ${ORACLE_WALLET_HOST_DIR:-./oracle_wallet}:/app/oracle_wallet:ro
+    ports:
+      - "4000:4000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_URL: http://localhost:4000/api
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  mysql_data:
