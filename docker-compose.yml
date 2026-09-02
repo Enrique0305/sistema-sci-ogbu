@@ -27,8 +27,12 @@ services:
       MYSQL_PASSWORD: ${DB_PASSWORD:-cambiar_esta_clave}
     volumes:
       - mysql_data:/var/lib/mysql
-      # Carga el esquema + datos dummy automaticamente SOLO la primera vez
-      # que se crea el volumen (comportamiento estandar de la imagen MySQL).
+      # Carga el esquema + catalogos de referencia (servicios, unidades,
+      # categorias, acciones) automaticamente SOLO la primera vez que se
+      # crea el volumen. A proposito NO incluye estudiantes ni atenciones
+      # ficticias -- eso vive en database/seed_demo_dummy.sql, que este
+      # archivo NO monta, para que un servidor real nunca amanezca con
+      # datos de prueba mezclados con estudiantes reales.
       - ./database/schema_mysql.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     # Expuesto solo en la loopback del servidor, para clientes SQL locales.
     # Comentar esta linea si no se necesita acceso directo a la base.

@@ -24,8 +24,10 @@ Control Interno (SCI).
 ```
 sistema-sci-ogbu/
 ├── database/
-│   ├── schema_postgresql.sql   # DDL + datos dummy (PostgreSQL)
-│   └── schema_mysql.sql        # DDL + datos dummy (MySQL / MariaDB)
+│   ├── schema_postgresql.sql   # DDL (PostgreSQL) -- ver Nota 7, desactualizado
+│   ├── schema_mysql.sql        # DDL + catalogos de referencia (MySQL / MariaDB)
+│   ├── seed_demo_dummy.sql     # Estudiantes/atenciones FICTICIOS, solo para pruebas locales
+│   └── migrations/             # Cambios incrementales para bases ya desplegadas
 ├── backend/                    # API REST (Node.js + Express + MySQL)
 └── frontend/                   # SPA (React + Vite + Tailwind CSS)
 ```
@@ -46,13 +48,25 @@ sistema-sci-ogbu/
    mysql -u root -p -e "GRANT ALL PRIVILEGES ON sci_ogbu.* TO 'sci_ogbu_app'@'localhost';"
    ```
 
-2. Ejecutar el script de esquema y datos dummy:
+2. Ejecutar el script de esquema (incluye catalogos de referencia: servicios,
+   unidades, categorias, acciones -- necesarios para que el sistema sea
+   usable; NO incluye estudiantes ni atenciones ficticias):
 
    ```bash
    mysql -u sci_ogbu_app -p sci_ogbu < database/schema_mysql.sql
    ```
 
    (Para PostgreSQL en lugar de MySQL, ver la [Nota 7](#7-notas-sobre-postgresql) al final.)
+
+3. (Opcional, solo para desarrollo/pruebas locales) Cargar 8 estudiantes y
+   10 atenciones ficticios para probar el sistema sin datos reales:
+
+   ```bash
+   mysql -u sci_ogbu_app -p sci_ogbu < database/seed_demo_dummy.sql
+   ```
+
+   **No cargar este archivo en un servidor real accesible para la OGBU** --
+   por eso `docker-compose.yml` (seccion 9) no lo monta automaticamente.
 
 ## 2. Backend
 
@@ -98,6 +112,9 @@ npm run dev
 Abrir `http://localhost:5173` en el navegador.
 
 ## 4. Flujo de prueba end-to-end
+
+> Requiere haber cargado `database/seed_demo_dummy.sql` (paso 3 de la
+> seccion 1); con solo `schema_mysql.sql` no existen estudiantes todavia.
 
 1. En **Registro de atencion**, buscar el codigo `20190001` (dato dummy) y
    confirmar que se muestra el nombre del estudiante.
@@ -205,6 +222,12 @@ indices y constraints) y adapta `backend/src/config/db.js` para usar el
 driver `pg` con un `Pool` de `pg`, cambiando los placeholders `?` por
 `$1, $2, ...` y las llamadas `RETURNING` en los `INSERT` de los controladores
 en lugar de una consulta `SELECT` posterior por `insertId`.
+
+**Desactualizado:** `schema_postgresql.sql` todavia refleja el modelo
+original de 7 tablas (antes de la mesa de ayuda) y no incluye `unidades`,
+`categorias_atencion`, `catalogo_acciones` ni `atenciones_historial`.
+Usarlo tal cual solo sirve para el Registro de Atenciones/Dashboard SCI
+originales, no para las funciones de mesa de ayuda descritas mas abajo.
 
 ## 8. Integracion con Oracle SUM (opcional)
 
@@ -314,15 +337,18 @@ Navegadores LAN -> http://IP-DEL-SERVIDOR:8080
    El sistema queda en `http://IP-DEL-SERVIDOR:8080` (y
    `http://localhost:8080` en el propio servidor). La primera vez que se
    crea el volumen de MySQL se carga automaticamente
-   `database/schema_mysql.sql` (esquema + datos dummy).
+   `database/schema_mysql.sql` (esquema + catalogos de referencia). A
+   proposito **no** incluye estudiantes ni atenciones ficticias -- un
+   servidor real arranca con la tabla `estudiantes` vacia hasta que se
+   corre la sincronizacion con Oracle SUM (9.1) o se cargan altas manuales.
 5. Abrir el puerto en el firewall de Windows para el acceso desde la LAN:
    ```powershell
    New-NetFirewallRule -DisplayName "SCI-OGBU HTTP 8080" -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow
    ```
 ### 9.1. Sincronizacion de alumnos reales desde Oracle SUM
 
-Reemplaza los datos dummy de `estudiantes` por la matricula vigente
-(vista `OBIENESTAR.ALUMNO`). Requiere que el servidor tenga alcance de
+Puebla `estudiantes` con la matricula vigente (vista `OBIENESTAR.ALUMNO`).
+Requiere que el servidor tenga alcance de
 red a la base Autonomous del SUM (`10.110.2.208:1522`, solo accesible
 desde la red institucional).
 
@@ -350,10 +376,18 @@ desde la red institucional).
    Windows con la accion `docker compose run --rm backend npm run sync:alumnos`
    ejecutada en la carpeta del repo.
 
-Nota: los alumnos reales cuyo codigo coincida con un codigo dummy lo
-sobreescriben. Para partir de una base 100% limpia:
-`docker compose down -v && docker compose up -d --build` y luego la
-sincronizacion (se pierden las atenciones de prueba).
+**Advertencia:** `database/seed_demo_dummy.sql` (8 estudiantes ficticios,
+codigos como `20190001`) existe solo para pruebas locales — **nunca
+cargarlo en un servidor real**. Si se carga por error y luego se corre la
+sincronizacion, un codigo real que coincida por casualidad con uno
+ficticio hara que Oracle sobreescriba el nombre dummy con el real,
+dejando atenciones de prueba pegadas a un estudiante real (ver
+`git log` del 2 de septiembre de 2026 para el caso real que motivo este
+cambio). Si eso ya paso: identificar las atenciones con
+`SELECT * FROM atenciones WHERE estudiante_id IN (SELECT estudiante_id
+FROM estudiantes WHERE creado_en < 'FECHA_DE_LA_SINCRONIZACION')` y
+borrarlas (`respuestas_encuesta` primero, luego `atenciones`) en vez de
+recrear el volumen completo.
 
 ### 9.2. Operacion
 
