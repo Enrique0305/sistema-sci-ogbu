@@ -7,6 +7,10 @@ Esta carpeta contiene los cambios incrementales para bases **ya desplegadas**
 con datos reales, donde no se puede recrear el volumen (`docker compose down -v`
 borraría los estudiantes sincronizados).
 
+> Estas migraciones están escritas para **MySQL**. `database/schema_postgresql.sql`
+> ya incluye el modelo completo (equivalente a `schema_mysql.sql` con todas las
+> migraciones aplicadas), por lo que en PostgreSQL se instala siempre desde ese script.
+
 ## Aplicar una migración
 
 ```bash

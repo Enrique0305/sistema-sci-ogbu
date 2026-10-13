@@ -266,12 +266,35 @@ de estados.
 
 ## 7. Notas sobre PostgreSQL
 
-El backend incluido usa el driver `mysql2` (MySQL/MariaDB). Si prefieres
-PostgreSQL, usa `database/schema_postgresql.sql` (mismo modelo de tablas,
-indices y constraints) y adapta `backend/src/config/db.js` para usar el
-driver `pg` con un `Pool` de `pg`, cambiando los placeholders `?` por
-`$1, $2, ...` y las llamadas `RETURNING` en los `INSERT` de los controladores
-en lugar de una consulta `SELECT` posterior por `insertId`.
+`database/schema_postgresql.sql` es el **modelo equivalente** al de MySQL
+(`schema_mysql.sql`): las mismas 13 tablas y la vista `v_reincidencias`, con las
+mismas columnas, claves, indices, restricciones y datos semilla (mesa de ayuda,
+autenticacion y motivos recurrentes). Se valido cargandolo en PostgreSQL 16 junto
+al de MySQL: 110 columnas identicas por nombre, mismos conteos de filas semilla y
+comprobacion de CHECK, UNIQUE, cascadas y RESTRICT. Equivalencias de tipos:
+`SERIAL`/`BIGSERIAL` por `AUTO_INCREMENT`, `BOOLEAN` por `TINYINT(1)` y
+`VARCHAR + CHECK` por `ENUM`.
+
+**El backend incluido sigue usando `mysql2`** (la base en operacion es MySQL 8).
+Para operar sobre PostgreSQL falta adaptar la capa de acceso a datos
+(`backend/src/config/db.js` y las consultas), con este inventario:
+
+| MySQL (hoy) | PostgreSQL | Donde |
+|---|---|---|
+| Placeholders `?` | `$1, $2, ...` (se puede traducir de forma central en `db.js`) | todas las consultas |
+| `insertId` / `affectedRows` | `RETURNING <pk>` / `rowCount` | `atencionesController`, `adminUsuariosController`, `createAdmin`, `importCatalogo` |
+| `ON DUPLICATE KEY UPDATE col = VALUES(col)` | `ON CONFLICT (...) DO UPDATE SET col = EXCLUDED.col` | `importCatalogo`, `sincronizarAlumnos` |
+| `TIMESTAMPDIFF(HOUR, a, b)` | `EXTRACT(EPOCH FROM (b - a)) / 3600` | `indicadoresController`, `authController` |
+| `DATE_ADD(NOW(), INTERVAL ? HOUR)` | `NOW() + (? * INTERVAL '1 hour')` | `middleware/auth`, `authController` |
+| `col = 1` / `SUM(expr)` sobre booleanos | `col = TRUE` / `SUM((expr)::int)` | `indicadoresController`, controladores de catalogos |
+| `IF(cond, a, b)` | `CASE WHEN cond THEN a ELSE b END` | `importCatalogo` |
+| `mysql2` `Pool` y transacciones | `pg` `Pool` / `client.query('BEGIN')` | `config/db.js` (`query`, `getClient`) |
+
+El frontend no depende del motor. Ademas, `docker-compose.yml` tendria que
+reemplazar el servicio `mysql` por uno `postgres` (imagen oficial con el script
+montado en `/docker-entrypoint-initdb.d/`). Las migraciones de
+`database/migrations/` estan escritas para MySQL; en PostgreSQL se parte siempre
+del script completo.
 
 **Desactualizado:** `schema_postgresql.sql` todavia refleja el modelo
 original de 7 tablas (antes de la mesa de ayuda) y no incluye `unidades`,
