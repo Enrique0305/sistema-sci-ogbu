@@ -9,10 +9,11 @@ import {
   obtenerAcciones,
 } from '../api/client';
 import EncuestaModal from './EncuestaModal';
+import { useAuth } from '../auth/AuthContext';
 
-// Mientras no haya autenticacion, la unidad y el operador se eligen en el
-// formulario (encadenados: servicio -> unidad -> operador) en lugar de
-// tomarse de una sesion.
+// El responsable de la atencion es el usuario de la sesion (el backend lo
+// impone). Solo un Administrador puede asignarla a otro operador de la unidad
+// elegida (encadenado: servicio -> unidad -> operador).
 
 const PRIORIDADES = ['Baja', 'Media', 'Alta'];
 
@@ -31,6 +32,8 @@ const ESTADO_INICIAL = {
 };
 
 export default function RegistroAtencion() {
+  const { usuario } = useAuth();
+  const esAdmin = usuario.rol_sistema === 'Administrador';
   const [servicios, setServicios] = useState([]);
   const [unidades, setUnidades] = useState([]);
   const [operadores, setOperadores] = useState([]);
@@ -266,25 +269,32 @@ export default function RegistroAtencion() {
           </select>
         </div>
 
-        {/* Operador responsable */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700">
-            Operador responsable <span className="font-normal text-gray-400">(opcional)</span>
-          </label>
-          <select
-            value={form.usuarioResponsableId}
-            onChange={(e) => set('usuarioResponsableId', e.target.value)}
-            disabled={!form.unidadId}
-            className={inputCls}
-          >
-            <option value="">Sin especificar</option>
-            {operadores.map((o) => (
-              <option key={o.usuario_id} value={o.usuario_id}>
-                {o.nombres} {o.apellidos}{o.cargo ? ` - ${o.cargo}` : ''}
-              </option>
-            ))}
-          </select>
-        </div>
+        {/* Operador responsable: sale de la sesion; solo el Administrador puede asignar a otro */}
+        {esAdmin ? (
+          <div>
+            <label className="block text-sm font-medium text-gray-700">
+              Asignar a <span className="font-normal text-gray-400">(opcional; por defecto, tu usuario)</span>
+            </label>
+            <select
+              value={form.usuarioResponsableId}
+              onChange={(e) => set('usuarioResponsableId', e.target.value)}
+              disabled={!form.unidadId}
+              className={inputCls}
+            >
+              <option value="">Yo ({usuario.nombres} {usuario.apellidos})</option>
+              {operadores.map((o) => (
+                <option key={o.usuario_id} value={o.usuario_id}>
+                  {o.nombres} {o.apellidos}{o.cargo ? ` - ${o.cargo}` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <div className="rounded-md bg-gray-50 px-3 py-2 text-sm text-gray-600">
+            Registrando como <span className="font-medium text-gray-900">{usuario.nombres} {usuario.apellidos}</span>
+            {usuario.unidad_nombre ? ` · ${usuario.unidad_nombre}` : ''}
+          </div>
+        )}
 
         {/* Categoria y prioridad */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

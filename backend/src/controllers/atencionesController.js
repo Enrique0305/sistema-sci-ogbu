@@ -75,9 +75,16 @@ const crearAtencion = asyncHandler(async (req, res) => {
     descripcion_motivo,
     diagnostico_accion,
     accion_id,
-    usuario_responsable_id,
+    usuario_responsable_id: usuarioIndicado,
     prioridad,
   } = req.body;
+
+  // El responsable sale de la sesion: un Operador no puede registrar a nombre
+  // de otra persona. Un Administrador puede asignar la atencion a un operador.
+  const usuario_responsable_id =
+    req.user.rol_sistema === 'Administrador' && usuarioIndicado
+      ? usuarioIndicado
+      : req.user.usuario_id;
 
   // --- Servicio ---
   const { rows: servicioRows } = await query(
@@ -360,7 +367,10 @@ const obtenerAtencion = asyncHandler(async (req, res) => {
 // cambio en el historial y fija/limpia las fechas de resolucion/cierre.
 const cambiarEstado = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { estado_nuevo, comentario, unidad_derivada_id, unidad_id, usuario_responsable_id } = req.body;
+  const { estado_nuevo, comentario, unidad_derivada_id, unidad_id } = req.body;
+  // Quien ejecuta el cambio es siempre el usuario de la sesion (queda en el
+  // historial); el cliente no puede atribuir el cambio a otra persona.
+  const ejecutorId = req.user.usuario_id;
 
   const { rows } = await query(
     `SELECT atencion_id, estado_atencion, unidad_id FROM atenciones WHERE atencion_id = ?`,
@@ -397,16 +407,6 @@ const cambiarEstado = asyncHandler(async (req, res) => {
     }
   }
 
-  if (usuario_responsable_id) {
-    const { rows: opRows } = await query(
-      `SELECT usuario_id FROM usuarios_responsables WHERE usuario_id = ? AND estado = TRUE`,
-      [usuario_responsable_id]
-    );
-    if (opRows.length === 0) {
-      return res.status(404).json({ ok: false, error: 'El operador indicado no existe o esta inactivo' });
-    }
-  }
-
   const efectos = efectosFecha(estado_nuevo);
   const sets = ['estado_atencion = ?'];
   const valores = [estado_nuevo];
@@ -424,11 +424,6 @@ const cambiarEstado = asyncHandler(async (req, res) => {
     sets.push('unidad_id = ?');
     valores.push(unidad_id);
   }
-  if (usuario_responsable_id) {
-    sets.push('usuario_responsable_id = ?');
-    valores.push(usuario_responsable_id);
-  }
-
   const client = await getClient();
   try {
     await client.beginTransaction();
@@ -446,7 +441,7 @@ const cambiarEstado = asyncHandler(async (req, res) => {
         estado_nuevo,
         comentario ? comentario.trim() : null,
         unidad_id || actual.unidad_id,
-        usuario_responsable_id || null,
+        ejecutorId,
       ]
     );
 

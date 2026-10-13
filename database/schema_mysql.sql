@@ -41,18 +41,47 @@ CREATE TABLE unidades (
 -- ----------------------------------------------------------------------------
 -- 3. USUARIOS_RESPONSABLES  (operadores, pertenecen a una unidad)
 -- ----------------------------------------------------------------------------
+--    rol_sistema define los permisos en la aplicacion; password_hash NULL
+--    significa "sin credenciales" (no puede iniciar sesion).
 CREATE TABLE usuarios_responsables (
     usuario_id           INT AUTO_INCREMENT PRIMARY KEY,
     nombres              VARCHAR(100) NOT NULL,
     apellidos            VARCHAR(100) NOT NULL,
     correo_institucional VARCHAR(150) NOT NULL UNIQUE,
+    password_hash        VARCHAR(255) NULL,
     rol                  VARCHAR(50)  NOT NULL DEFAULT 'Operador',
+    rol_sistema          ENUM('Administrador', 'Operador', 'Consulta') NOT NULL DEFAULT 'Operador',
     unidad_id            INT NULL,
     cargo                VARCHAR(80) NULL,
     estado               TINYINT(1)   NOT NULL DEFAULT 1,
     creado_en            TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    debe_cambiar_clave   TINYINT(1)   NOT NULL DEFAULT 0,
+    intentos_fallidos    TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    bloqueado_hasta      DATETIME NULL,
+    ultimo_acceso        DATETIME NULL,
+    clave_actualizada_en DATETIME NULL,
     CONSTRAINT fk_usuarios_unidad FOREIGN KEY (unidad_id)
-        REFERENCES unidades (unidad_id) ON DELETE SET NULL
+        REFERENCES unidades (unidad_id) ON DELETE SET NULL,
+    INDEX idx_usuarios_rol_sistema (rol_sistema)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ----------------------------------------------------------------------------
+-- 3b. SESIONES  (sesiones de login del lado del servidor)
+--     Solo se guarda el hash SHA-256 del token; el token vive en una cookie
+--     httpOnly. Eliminar la fila revoca la sesion al instante.
+-- ----------------------------------------------------------------------------
+CREATE TABLE sesiones (
+    sesion_id   BIGINT AUTO_INCREMENT PRIMARY KEY,
+    token_hash  CHAR(64) NOT NULL UNIQUE,
+    usuario_id  INT NOT NULL,
+    creado_en   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expira_en   DATETIME NOT NULL,
+    ip          VARCHAR(45) NULL,
+    user_agent  VARCHAR(255) NULL,
+    CONSTRAINT fk_sesiones_usuario FOREIGN KEY (usuario_id)
+        REFERENCES usuarios_responsables (usuario_id) ON DELETE CASCADE,
+    INDEX idx_sesiones_usuario (usuario_id),
+    INDEX idx_sesiones_expira (expira_en)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ----------------------------------------------------------------------------

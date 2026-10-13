@@ -7,6 +7,7 @@ import {
 } from '../api/client';
 import CambiarEstadoModal from './CambiarEstadoModal';
 import AtencionDetalleModal from './AtencionDetalleModal';
+import { useAuth } from '../auth/AuthContext';
 
 function KpiCard({ etiqueta, valor, sufijo }) {
   return (
@@ -32,6 +33,7 @@ const ESTADO_BADGE = {
 };
 
 export default function DashboardIndicadores() {
+  const { permisos } = useAuth();
   const [servicios, setServicios] = useState([]);
   const [unidades, setUnidades] = useState([]);
   const [filtros, setFiltros] = useState({
@@ -295,15 +297,25 @@ export default function DashboardIndicadores() {
                     {a.categoria_nombre || '-'}
                   </td>
                   <td className="py-2 pr-4">
-                    <button
-                      onClick={() => setModalEstado(a.atencion_id)}
-                      className={`rounded-full px-2 py-0.5 text-xs font-medium hover:ring-2 hover:ring-ogbu-300 ${
-                        ESTADO_BADGE[a.estado_atencion] || 'bg-gray-100'
-                      }`}
-                      title="Cambiar estado"
-                    >
-                      {a.estado_atencion}
-                    </button>
+                    {permisos.operar ? (
+                      <button
+                        onClick={() => setModalEstado(a.atencion_id)}
+                        className={`rounded-full px-2 py-0.5 text-xs font-medium hover:ring-2 hover:ring-ogbu-300 ${
+                          ESTADO_BADGE[a.estado_atencion] || 'bg-gray-100'
+                        }`}
+                        title="Cambiar estado"
+                      >
+                        {a.estado_atencion}
+                      </button>
+                    ) : (
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                          ESTADO_BADGE[a.estado_atencion] || 'bg-gray-100'
+                        }`}
+                      >
+                        {a.estado_atencion}
+                      </span>
+                    )}
                   </td>
                   <td className="py-2 pr-4">
                     <button onClick={() => setModalDetalle(a.atencion_id)}

@@ -8,6 +8,7 @@ const {
   cambiarEstado,
 } = require('../controllers/atencionesController');
 const { ESTADOS } = require('../utils/estadoAtencion');
+const { requireRole } = require('../middleware/auth');
 
 const router = Router();
 
@@ -15,6 +16,7 @@ const PRIORIDADES = ['Baja', 'Media', 'Alta'];
 
 router.post(
   '/',
+  requireRole('Administrador', 'Operador'),
   [
     body('codigo_estudiante')
       .optional({ nullable: true, checkFalsy: true })
@@ -88,6 +90,7 @@ router.get(
 
 router.patch(
   '/:id/estado',
+  requireRole('Administrador', 'Operador'),
   [
     param('id').isInt({ min: 1 }).withMessage('id invalido').toInt(),
     body('estado_nuevo')
