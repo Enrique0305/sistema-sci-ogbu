@@ -126,6 +126,11 @@ export async function obtenerAcciones(filtros = {}) {
   return manejarRespuesta(res);
 }
 
+export async function obtenerMotivos(filtros = {}) {
+  const res = await fetch(`${BASE_URL}/motivos?${qs(filtros)}`);
+  return manejarRespuesta(res);
+}
+
 // --- Estudiantes ---
 export async function buscarEstudiante(codigo) {
   const res = await fetch(`${BASE_URL}/estudiantes/${encodeURIComponent(codigo)}`);

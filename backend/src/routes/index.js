@@ -9,7 +9,7 @@ const estudiantesRoutes = require('./estudiantes.routes');
 const serviciosRoutes = require('./servicios.routes');
 const unidadesRoutes = require('./unidades.routes');
 const usuariosRoutes = require('./usuarios.routes');
-const { categoriasRouter, accionesRouter } = require('./catalogos.routes');
+const { categoriasRouter, accionesRouter, motivosRouter } = require('./catalogos.routes');
 const { requireAuth, requireRole } = require('../middleware/auth');
 
 const router = Router();
@@ -35,5 +35,6 @@ router.use('/unidades', unidadesRoutes);
 router.use('/usuarios', usuariosRoutes);
 router.use('/categorias', categoriasRouter);
 router.use('/acciones', accionesRouter);
+router.use('/motivos', motivosRouter);
 
 module.exports = router;

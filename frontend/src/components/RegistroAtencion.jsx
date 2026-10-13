@@ -7,6 +7,7 @@ import {
   obtenerOperadores,
   obtenerCategorias,
   obtenerAcciones,
+  obtenerMotivos,
 } from '../api/client';
 import EncuestaModal from './EncuestaModal';
 import { useAuth } from '../auth/AuthContext';
@@ -39,6 +40,7 @@ export default function RegistroAtencion() {
   const [operadores, setOperadores] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [acciones, setAcciones] = useState([]);
+  const [motivos, setMotivos] = useState([]);
 
   const [form, setForm] = useState(ESTADO_INICIAL);
   const [estudiante, setEstudiante] = useState(null);
@@ -71,6 +73,16 @@ export default function RegistroAtencion() {
     obtenerAcciones(filtro).then((d) => setAcciones(d.acciones)).catch(() => setAcciones([]));
     setForm((f) => ({ ...f, unidadId: '', usuarioResponsableId: '', categoriaId: '', accionId: '' }));
   }, [form.servicioId]);
+
+  // Motivos frecuentes del servicio (y de la categoria elegida, si la hay).
+  useEffect(() => {
+    if (!form.servicioId) {
+      setMotivos([]);
+      return;
+    }
+    const filtro = { servicio_id: form.servicioId, categoria_id: form.categoriaId };
+    obtenerMotivos(filtro).then((d) => setMotivos(d.motivos)).catch(() => setMotivos([]));
+  }, [form.servicioId, form.categoriaId]);
 
   // Al cambiar la unidad: recargar operadores de esa unidad.
   useEffect(() => {
@@ -327,6 +339,21 @@ export default function RegistroAtencion() {
         {/* Motivo */}
         <div>
           <label className="block text-sm font-medium text-gray-700">Motivo de atencion</label>
+          {motivos.length > 0 && (
+            <select
+              value=""
+              onChange={(e) => {
+                const elegido = motivos.find((m) => String(m.motivo_id) === e.target.value);
+                if (elegido) set('descripcionMotivo', elegido.texto);
+              }}
+              className={inputCls}
+            >
+              <option value="">Motivo frecuente (opcional): elige uno para rellenar, o escribe abajo</option>
+              {motivos.map((m) => (
+                <option key={m.motivo_id} value={m.motivo_id}>{m.texto}</option>
+              ))}
+            </select>
+          )}
           <textarea
             value={form.descripcionMotivo}
             onChange={(e) => set('descripcionMotivo', e.target.value)}
