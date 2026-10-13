@@ -8,7 +8,8 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "sync:alumnos": "node src/scripts/syncAlumnosOracle.js",
-    "import:catalogo": "node src/scripts/importCatalogo.js"
+    "import:catalogo": "node src/scripts/importCatalogo.js",
+    "create:admin": "node src/scripts/createAdmin.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

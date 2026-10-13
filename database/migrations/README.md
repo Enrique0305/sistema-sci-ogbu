@@ -33,6 +33,7 @@ llevar el registro manualmente.
 |---|---|---|
 | (baseline) `schema_mysql.sql` | Modelo inicial (7 tablas) | — |
 | `002_helpdesk.sql` | Mesa de ayuda: unidades, categorías, catálogo de acciones, ciclo de estados + historial, servicios internos, `estudiante_id` opcional | 2026-08-31 |
+| `003_auth.sql` | Autenticación: `password_hash`, `rol_sistema`, bloqueo por intentos y cambio de clave obligatorio en `usuarios_responsables`; tabla `sesiones` | 2026-10-13 |
 
 ## Restaurar desde backup
 

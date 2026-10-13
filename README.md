@@ -131,6 +131,13 @@ Abrir `http://localhost:5173` en el navegador.
 | GET    | `/api/usuarios?unidad_id=`       | Operadores activos, filtrables por unidad                      |
 | GET    | `/api/categorias?servicio_id=`   | Catalogo de tipos de atencion                                  |
 | GET    | `/api/acciones?servicio_id=`     | Catalogo de acciones tomadas                                   |
+| POST   | `/api/auth/login`                | Inicia sesion (publico; bloqueo tras 5 fallos)                 |
+| POST   | `/api/auth/logout`               | Cierra la sesion                                               |
+| GET    | `/api/auth/me`                   | Usuario de la sesion actual                                    |
+| POST   | `/api/auth/cambiar-clave`        | Cambia la clave propia (cierra las demas sesiones)             |
+| GET/POST/PATCH | `/api/admin/usuarios[/:id]` | Gestion de usuarios (solo Administrador)                    |
+| POST   | `/api/admin/usuarios/:id/reset-clave` | Genera clave temporal y obliga a cambiarla (solo Admin)   |
+| POST   | `/api/admin/usuarios/:id/desbloquear` | Quita el bloqueo por intentos fallidos (solo Admin)       |
 
 ### Ciclo de estados de una atencion (mesa de ayuda)
 
@@ -182,10 +189,36 @@ con `solicitante_desc`) en los servicios internos `Soporte TI` y `Gestion OGBU`
 - Transacciones (`BEGIN`/`COMMIT`/`ROLLBACK`) para operaciones multi-fila
   (guardado de encuestas, registro de atenciones con historial, cambios de estado).
 
-> **Pendiente de seguridad:** el sistema aun no tiene autenticacion de usuarios.
-> La unidad y el operador de cada atencion/cambio de estado se eligen en el
-> formulario, no se toman de una sesion. Antes de un uso multi-oficina real debe
-> incorporarse login y control de acceso por unidad.
+### Autenticacion y roles
+
+Todas las rutas de la API (salvo `/api/health` y `/api/auth/login`) exigen sesion.
+
+| Rol | Permisos |
+|---|---|
+| **Administrador** | Todo el sistema + modulo **Usuarios** (crear, editar, activar/desactivar, restablecer clave, desbloquear) |
+| **Operador** | Registrar atenciones y tickets, cambiar estados, ver dashboard. El responsable de cada atencion es siempre el usuario de la sesion |
+| **Consulta** | Solo lectura de dashboard y listados (no ve datos de estudiantes ni registra) |
+
+- Sesion del lado del servidor: token aleatorio en cookie `httpOnly` + `SameSite=Strict`;
+  en la BD solo se guarda su hash SHA-256 (tabla `sesiones`). Duracion 8 h
+  (`SESSION_HOURS`). Desactivar a un usuario o cambiarle el rol surte efecto al instante.
+- Claves con scrypt (modulo nativo de Node, sin dependencias). Politica: minimo 10
+  caracteres, letras y numeros. Las claves temporales (alta/restablecimiento por un
+  administrador) se muestran **una sola vez** y obligan a cambiarlas en el primer ingreso.
+- Proteccion contra fuerza bruta: 5 intentos fallidos bloquean la cuenta 15 min
+  (el administrador puede desbloquear) + limite por IP en el login. Mensaje
+  generico ante credenciales invalidas.
+- **Primer administrador** (o recuperacion si se pierde la clave del unico admin):
+  ```bash
+  docker compose run --rm backend npm run create:admin -- correo@unmsm.edu.pe "Nombres" "Apellidos"
+  ```
+  Imprime una clave temporal una sola vez. En bases ya desplegadas aplicar antes
+  `database/migrations/003_auth.sql`.
+- Los operadores importados con `import:catalogo` quedan **sin clave** hasta que un
+  administrador les genere una desde el modulo Usuarios.
+- Pendiente: HTTPS (proxy inverso con certificado delante del puerto 8080; la cookie
+  se marca `Secure` automaticamente al llegar por HTTPS) y, si se requiere, limitar
+  el alcance de datos por unidad.
 
 ### Estructura de la base de datos (mesa de ayuda)
 
@@ -224,7 +257,7 @@ academica.
 (`npm run dev` / `npm start`) nunca inicializa la conexion a Oracle, asi
 que si Oracle no esta disponible el resto de la API sigue funcionando con
 normalidad. La sincronizacion se ejecuta como script manual/cron, no como
-endpoint HTTP, porque el proyecto aun no tiene autenticacion de usuarios.
+endpoint HTTP: es una tarea administrativa que corre como script.
 
 1. Instalar dependencia (ya incluida en `package.json`):
    ```bash
@@ -369,9 +402,9 @@ variables que dependen de la topologia de contenedores (`DB_HOST`,
 `DB_*`, `CORS_ORIGIN`, `ORACLE_WALLET_DIR`, `ORACLE_INSTANT_CLIENT_DIR`)
 — no hace falta editarlas manualmente para Docker.
 
-**Seguridad:** el sistema aun no tiene autenticacion de usuarios;
-limita el acceso a la red interna. Cambia las contrasenas por defecto
-de `.env` antes de exponerlo. Para HTTPS, coloca un proxy inverso
+**Seguridad:** el acceso esta protegido por login y roles (ver "Autenticacion y
+roles"); aun asi, limita el acceso a la red interna. Cambia las contrasenas por
+defecto de `.env` antes de exponerlo. Para HTTPS, coloca un proxy inverso
 institucional (o Caddy/nginx con certificado) delante del puerto 8080.
 
 ## Licencia
