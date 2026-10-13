@@ -1,7 +1,11 @@
 const { Router } = require('express');
 const { query: queryValidator } = require('express-validator');
 const validate = require('../middleware/validate');
-const { listarCategorias, listarAcciones } = require('../controllers/catalogosController');
+const {
+  listarCategorias,
+  listarAcciones,
+  listarMotivos,
+} = require('../controllers/catalogosController');
 
 const categoriasRouter = Router();
 categoriasRouter.get(
@@ -19,4 +23,15 @@ accionesRouter.get(
   listarAcciones
 );
 
-module.exports = { categoriasRouter, accionesRouter };
+const motivosRouter = Router();
+motivosRouter.get(
+  '/',
+  [
+    queryValidator('servicio_id').optional().isInt({ min: 1 }).toInt(),
+    queryValidator('categoria_id').optional().isInt({ min: 1 }).toInt(),
+  ],
+  validate,
+  listarMotivos
+);
+
+module.exports = { categoriasRouter, accionesRouter, motivosRouter };

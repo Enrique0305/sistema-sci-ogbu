@@ -49,4 +49,34 @@ const listarAcciones = asyncHandler(async (req, res) => {
   res.json({ ok: true, acciones: rows });
 });
 
-module.exports = { listarCategorias, listarAcciones };
+
+// GET /api/motivos?servicio_id=&categoria_id=
+// Motivos de atencion recurrentes (atajos para el campo "motivo", que sigue
+// siendo texto libre). Con categoria_id devuelve los de esa categoria mas los
+// que no estan atados a ninguna categoria del servicio.
+const listarMotivos = asyncHandler(async (req, res) => {
+  const { servicio_id, categoria_id } = req.query;
+
+  const condiciones = ['m.activo = TRUE'];
+  const valores = [];
+  if (servicio_id) {
+    condiciones.push('m.servicio_id = ?');
+    valores.push(servicio_id);
+  }
+  if (categoria_id) {
+    condiciones.push('(m.categoria_id = ? OR m.categoria_id IS NULL)');
+    valores.push(categoria_id);
+  }
+
+  const { rows } = await query(
+    `SELECT m.motivo_id, m.servicio_id, m.categoria_id, m.texto, m.frecuencia_mensual
+       FROM motivos_recurrentes m
+      WHERE ${condiciones.join(' AND ')}
+      ORDER BY m.frecuencia_mensual IS NULL, m.frecuencia_mensual DESC, m.texto`,
+    valores
+  );
+
+  res.json({ ok: true, motivos: rows });
+});
+
+module.exports = { listarCategorias, listarAcciones, listarMotivos };

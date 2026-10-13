@@ -131,6 +131,7 @@ Abrir `http://localhost:5173` en el navegador.
 | GET    | `/api/usuarios?unidad_id=`       | Operadores activos, filtrables por unidad                      |
 | GET    | `/api/categorias?servicio_id=`   | Catalogo de tipos de atencion                                  |
 | GET    | `/api/acciones?servicio_id=`     | Catalogo de acciones tomadas                                   |
+| GET    | `/api/motivos?servicio_id=&categoria_id=` | Motivos de atencion recurrentes (atajos del formulario) |
 | POST   | `/api/auth/login`                | Inicia sesion (publico; bloqueo tras 5 fallos)                 |
 | POST   | `/api/auth/logout`               | Cierra la sesion                                               |
 | GET    | `/api/auth/me`                   | Usuario de la sesion actual                                    |
@@ -161,12 +162,28 @@ Las atenciones se clasifican con `categorias_atencion` (catalogo por servicio) y
 `catalogo_acciones`. Al registrar una atencion de un estudiante en una categoria
 que ya tuvo antes, el sistema la marca como reincidente y la enlaza a la anterior
 (`atencion_origen_id`). El catalogo se puebla enviando a cada oficina la plantilla
-`docs/formatos/Formato_Catalogo_Atenciones_OGBU.xlsx` y luego:
+`docs/formatos/Formato_Catalogo_Atenciones_OGBU.xlsx` (v2) y luego:
 
 ```bash
 # copiar los .xlsx llenados a docs/formatos/entrada/ y ejecutar:
 docker compose run --rm backend npm run import:catalogo
 ```
+
+Hojas de la plantilla (todas opcionales; el importador las procesa en este orden):
+
+| Hoja | Se carga en | Contenido |
+|---|---|---|
+| `Unidades` | `unidades` | Unidades/oficinas (precargadas las vigentes), servicio y tipo |
+| `Operadores` | `usuarios_responsables` | Personal por unidad con rol `Operador` o `Consulta` (sin clave; la genera el administrador) |
+| `Categorias` | `categorias_atencion` | Tipos de atencion, si suelen repetirse y frecuencia; "se asigna a" es referencial |
+| `Motivos` | `motivos_recurrentes` | Motivos recurrentes (atajos en el formulario; el motivo siempre admite texto libre) |
+| `Acciones` | `catalogo_acciones` | Acciones tipicas por servicio |
+
+Salvaguardas del importador: ignora las filas que empiezan con `EJEMPLO`; no asigna el rol
+`Administrador`, no degrada a un administrador existente ni reactiva usuarios desactivados;
+cada fila omitida se reporta con su motivo. La plantilla se regenera con
+`docs/formatos/_generar_formato.js` (ver su cabecera); los nombres de hoja y el orden de
+columnas deben coincidir con `backend/src/scripts/importCatalogo.js`.
 
 ### Tickets internos
 
