@@ -198,7 +198,10 @@ Hojas de la plantilla (todas opcionales; el importador las procesa en este orden
 
 Salvaguardas del importador: ignora las filas que empiezan con `EJEMPLO`; no asigna el rol
 `Administrador`, no degrada a un administrador existente ni reactiva usuarios desactivados;
-cada fila omitida se reporta con su motivo. La plantilla se regenera con
+un correo corresponde a una sola persona: si dos personas distintas comparten el mismo correo en
+las plantillas, o el correo ya pertenece en el sistema a otra persona, no se carga a ninguna de
+ellas y se reporta (cada usuario debe tener su correo individual para que cada atencion y cada
+cambio de estado quede a su nombre); cada fila omitida se reporta con su motivo. La plantilla se regenera con
 `docs/formatos/_generar_formato.js` (ver su cabecera); los nombres de hoja y el orden de
 columnas deben coincidir con `backend/src/scripts/importCatalogo.js`.
 

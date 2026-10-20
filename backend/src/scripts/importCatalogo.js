@@ -17,7 +17,12 @@
 // Cada fila omitida se reporta con su motivo. Salvaguardas:
 //   - las filas cuya primera celda empieza con "EJEMPLO" se ignoran;
 //   - la plantilla no puede asignar el rol Administrador, ni degradar a un
-//     administrador existente, ni reactivar a un usuario desactivado.
+//     administrador existente, ni reactivar a un usuario desactivado;
+//   - un correo es una cuenta (UNIQUE): si lo usan personas distintas en las
+//     plantillas, o ya pertenece en la base a otra persona, NO se carga a
+//     ninguna (no se adivina de quien es) y se reporta para que cada persona
+//     tenga su correo individual; asi cada atencion queda a nombre de quien
+//     la registro.
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
@@ -83,6 +88,36 @@ function filasDeHoja(ws) {
   return filas;
 }
 
+const CORREO_VALIDO = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Pasada previa sobre TODAS las plantillas: correos de la hoja Operadores que
+// aparecen con mas de una persona distinta (comparando nombre completo sin
+// tildes ni mayusculas). Devuelve Map(correo -> [descripcion de cada fila]).
+async function detectarCorreosCompartidos(archivos) {
+  const porCorreo = new Map(); // correo -> Map(nombreNormalizado -> [filas])
+  for (const f of archivos) {
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(path.join(DIR, f));
+    const ws = wb.getWorksheet('Operadores');
+    if (!ws) continue;
+    for (const { n, vals } of filasDeHoja(ws)) {
+      const [, nombres, apellidos, correo] = vals;
+      if (!CORREO_VALIDO.test(correo)) continue;
+      const clave = correo.toLowerCase();
+      const persona = norm(`${nombres} ${apellidos}`);
+      if (!porCorreo.has(clave)) porCorreo.set(clave, new Map());
+      const personas = porCorreo.get(clave);
+      if (!personas.has(persona)) personas.set(persona, []);
+      personas.get(persona).push(`${f} / Operadores fila ${n} (${nombres} ${apellidos})`);
+    }
+  }
+  const compartidos = new Map();
+  for (const [correo, personas] of porCorreo) {
+    if (personas.size > 1) compartidos.set(correo, [...personas.values()].flat());
+  }
+  return compartidos;
+}
+
 async function importarArchivo(file, mapas, rep) {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(file);
@@ -118,7 +153,30 @@ async function importarArchivo(file, mapas, rep) {
       const unidadId = mapas.unidadPorNombre.get(norm(unidad));
       if (!unidadId) { omitir('Operadores', n, `unidad desconocida "${unidad}" (agreguela en la hoja Unidades)`); continue; }
       if (!nombres || !apellidos) { omitir('Operadores', n, 'faltan nombres o apellidos'); continue; }
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo)) { omitir('Operadores', n, `correo invalido "${correo}"`); continue; }
+      if (!CORREO_VALIDO.test(correo)) { omitir('Operadores', n, `correo invalido "${correo}"`); continue; }
+
+      // Un correo = una cuenta = una persona. Ver cabecera del archivo.
+      const correoMin = correo.toLowerCase();
+      if (mapas.correosCompartidos.has(correoMin)) {
+        omitir(
+          'Operadores', n,
+          `el correo ${correoMin} lo usan varias personas (${mapas.correosCompartidos.get(correoMin).length} filas); ` +
+          'pida un correo individual a cada una'
+        );
+        continue;
+      }
+      const { rows: existentes } = await query(
+        'SELECT nombres, apellidos FROM usuarios_responsables WHERE correo_institucional = ?',
+        [correoMin]
+      );
+      if (existentes.length > 0 && norm(`${existentes[0].nombres} ${existentes[0].apellidos}`) !== norm(`${nombres} ${apellidos}`)) {
+        omitir(
+          'Operadores', n,
+          `el correo ${correoMin} ya pertenece a "${existentes[0].nombres} ${existentes[0].apellidos}"; ` +
+          'si el cambio es correcto, edite al usuario desde el modulo Usuarios'
+        );
+        continue;
+      }
 
       let rol = 'Operador';
       if (rolTxt) {
@@ -136,7 +194,7 @@ async function importarArchivo(file, mapas, rep) {
             nombres = VALUES(nombres), apellidos = VALUES(apellidos),
             unidad_id = VALUES(unidad_id), cargo = VALUES(cargo),
             rol_sistema = IF(rol_sistema = 'Administrador', rol_sistema, VALUES(rol_sistema))`,
-        [nombres, apellidos, correo.toLowerCase(), rol, unidadId, cargo || null]
+        [nombres, apellidos, correoMin, rol, unidadId, cargo || null]
       );
       rep.operadores += 1;
     }
@@ -233,6 +291,7 @@ async function main() {
   }
 
   const mapas = await cargarMapas();
+  mapas.correosCompartidos = await detectarCorreosCompartidos(archivos);
   const rep = { unidades: 0, operadores: 0, categorias: 0, acciones: 0, motivos: 0, omitidos: [] };
 
   for (const f of archivos) {
