@@ -1,5 +1,6 @@
 const { query, getClient } = require('../config/db');
 const asyncHandler = require('../utils/asyncHandler');
+const { asegurarTrimestre } = require('../utils/trimestres');
 const {
   TRANSICIONES,
   ESTADOS_ABIERTOS,
@@ -9,8 +10,16 @@ const {
 
 // Determina si corresponde disparar la encuesta de satisfaccion tras una
 // atencion: existe un trimestre vigente y ese servicio tiene preguntas
-// activas configuradas para dicho trimestre.
+// activas configuradas para dicho trimestre. Los trimestres se crean solos (y
+// heredan las preguntas del anterior); un fallo ahi nunca debe impedir que la
+// atencion ya registrada se confirme, solo se omite la encuesta.
 async function evaluarTriggerEncuesta(servicioId) {
+  try {
+    await asegurarTrimestre();
+  } catch (err) {
+    console.error('[trimestres] No se pudo asegurar el trimestre vigente:', err.message);
+  }
+
   const { rows: trimestreRows } = await query(
     `SELECT trimestre_id, anio, periodo_trimestre
        FROM trimestres
