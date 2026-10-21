@@ -129,8 +129,15 @@ Abrir `http://localhost:5173` en el navegador.
 
 > Nota sobre el trimestre vigente: el trigger de encuesta depende de que la
 > fecha actual caiga dentro de un rango `fecha_inicio`/`fecha_fin` en la
-> tabla `trimestres`. Los datos dummy cubren 2026 (T1-T3); ajustar las
-> fechas del script SQL si se prueba fuera de ese rango.
+> tabla `trimestres`. Los trimestres **se crean solos**
+> (`backend/src/utils/trimestres.js`): al arrancar el backend y al registrar
+> cada atencion se verifica que exista el trimestre calendario de hoy (ene-mar,
+> abr-jun, jul-sep, oct-dic) y, si no tiene ninguna pregunta, se copian las del
+> trimestre mas reciente que las tenga. Si el trimestre ya tiene preguntas
+> (aunque esten inactivas) no se toca, de modo que la edicion manual manda.
+> Para cambiar las preguntas de un trimestre basta modificar
+> `preguntas_encuesta`; un fallo al crear el trimestre nunca impide registrar
+> la atencion, solo omite la encuesta.
 
 ## 5. Endpoints principales
 
